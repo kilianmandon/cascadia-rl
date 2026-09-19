@@ -21,8 +21,6 @@ class Landscape(Enum):
     WETLAND=3
     RIVER=4
 
-# Config depends on Animal, so it must be imported after the enum declarations.
-from config import CONFIG
 
 animal_str_to_enum = {
     "GRIZZLY": Animal.GRIZZLY,

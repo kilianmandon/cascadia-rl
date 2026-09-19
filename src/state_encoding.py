@@ -1,5 +1,5 @@
 import numpy as np
-from base_types import BuiltPlate, GamePhase
+from base_types import Animal, BuiltPlate, GamePhase
 import torch
 from torch.nn import functional as F
 
@@ -27,7 +27,7 @@ def encode_individual_land_state(game_state: GameState, player: int):
 
     # Land-type-by-side, supported animals, built animal
     out_channels = 6*5 + 5 + 5
-    out = np.zeros((max_size, max_size, out_channels))
+    out = np.zeros((max_size, max_size, out_channels), dtype=int)
 
     for (ii,jj), plate in land_state.items():
         i, j = ii+max_size//2, jj+max_size//2
@@ -39,7 +39,7 @@ def encode_individual_land_state(game_state: GameState, player: int):
         landscape_encoding[right_landscape_inds] = plate.right_landscape.value
         landscape_encoding[left_landscape_inds] = plate.left_landscape.value
 
-        landscape_onehot = F.one_hot(torch.tensor(landscape_encoding), num_classes=5).numpy()
+        landscape_onehot = F.one_hot(torch.tensor(landscape_encoding), num_classes=5).numpy().reshape(-1)
 
         supported_animals = np.array([a.value for a in plate.animals])
 
@@ -64,11 +64,24 @@ def compute_grid_state(game_state: GameState, player_idx: int):
 
 def encode_individual_single_state(game_state: GameState, player: int):
     player_state = game_state.players[player]
-    state = np.zeros((10,))
+    state = np.zeros((10,), dtype=int)
     pine_cone_idx = min(player_state.pine_cones, 9)
     state[pine_cone_idx] = 1
 
     return state
+
+
+def encode_pool_state(game_state: GameState):
+    # size 4*2*5 + 4*5 + 4*5 = 80
+    pool_state = game_state.pool_state
+
+    landscapes = sum([[plate.left_landscape.value, plate.right_landscape.value] for plate in pool_state.plate_pool], [])
+    landscape_enc = F.one_hot(torch.tensor(landscapes), num_classes=5).numpy().reshape(-1)
+    supported_animals = np.array([1 if a in plate.animals else 0 for plate in pool_state.plate_pool for a in Animal])
+
+    animals = F.one_hot(torch.tensor([a.value for a in pool_state.animal_pool]), num_classes=5).numpy().reshape(-1)
+
+    return np.concatenate((landscape_enc, supported_animals, animals), axis=-1)
 
 def compute_single_state(game_state: GameState, player_idx: int):
     n_players = len(game_state.players)
@@ -80,9 +93,10 @@ def compute_single_state(game_state: GameState, player_idx: int):
     group_single_state = np.concatenate(individual_single_states, axis=-1)
 
     phase_state = F.one_hot(torch.tensor(game_state.game_phase.value), num_classes=3).numpy()
+    pool_state = encode_pool_state(game_state)
 
-    # shape n_players*10 + 3
-    return np.concatenate((group_single_state, phase_state), axis=-1)
+    # shape n_players*10 + 80 + 3
+    return np.concatenate((group_single_state, pool_state, phase_state), axis=-1)
 
 
 def compute_state(game_state: GameState, player_idx: int):

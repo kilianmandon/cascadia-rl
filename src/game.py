@@ -3,6 +3,16 @@ from config import CONFIG
 
 from base_types import Animal, BasePlate, BuiltPlate, GameState, Action, ActionKind
 
+def manage_overpopulation(state: GameState):
+    animal_plates = state.pool_state.animal_pool
+    if all(a == animal_plates[0] for a in animal_plates):
+        new_animal_plates = [state.bag.sample_animal_plate() for _ in range(4)]
+        for animal in animal_plates:
+            state.bag.animal_plates[animal] += 1
+
+        state.pool_state.animal_pool = new_animal_plates
+        manage_overpopulation(state)
+
 def reroll_all(state: GameState, action: Action, active_player_idx: int) -> GameState:
     player_state = state.players[active_player_idx]
     if player_state.pine_cones < 1:
@@ -22,21 +32,20 @@ def reroll_three(state: GameState, action: Action, active_player_idx: int) -> Ga
     counter = Counter(animal_plates)
     player_state = state.players[active_player_idx]
     with_three = [a for a in Animal if counter[a] == 3]
-    if len(with_three) != 1 or player_state.has_rerolled or player_state.pine_cones < 1:
+    if not reroll_three_mask(state, active_player_idx):
         raise ValueError('No three identical animals in pool.')
     to_reroll = with_three[0]
     for i, a in enumerate(animal_plates):
         if a == to_reroll:
             animal_plates[i] = state.bag.sample_animal_plate()
     state.bag.animal_plates[to_reroll] += 3
-    player_state.pine_cones -= 1
     player_state.has_rerolled = True
 
 def reroll_three_mask(state: GameState, active_player_idx: int) -> bool:
     animal_plates = state.pool_state.animal_pool
     counter = Counter(animal_plates)
     with_three = [a for a in Animal if counter[a] == 3]
-    return len(with_three) == 1 and not state.players[active_player_idx].has_rerolled and state.players[active_player_idx].pine_cones > 0
+    return len(with_three) == 1 and not state.players[active_player_idx].has_rerolled
 
 def take_pair(state: GameState, action: Action, active_player_idx: int) -> GameState:
     take_idx = action.params['take_idx']
@@ -46,8 +55,14 @@ def take_pair(state: GameState, action: Action, active_player_idx: int) -> GameS
     base_plate = state.pool_state.plate_pool[take_idx]
     animal = state.pool_state.animal_pool[take_idx]
 
-    state.pool_state.plate_pool[take_idx] = state.bag.sample_base_plate()
     state.pool_state.animal_pool[take_idx] = state.bag.sample_animal_plate()
+
+    try:
+        state.pool_state.plate_pool[take_idx] = state.bag.sample_base_plate()
+    except ValueError:
+        state.pool_state.plate_pool[take_idx] = None
+
+
 
     state.players[active_player_idx].to_place = (animal, base_plate)
 
@@ -66,7 +81,11 @@ def take_mixed(state: GameState, action: Action, active_player_idx: int):
     base_plate = state.pool_state.plate_pool[take_idx_land]
     animal = state.pool_state.animal_pool[take_idx_animal]
 
-    state.pool_state.plate_pool[take_idx_land] = state.bag.sample_base_plate()
+    try:
+        state.pool_state.plate_pool[take_idx_land] = state.bag.sample_base_plate()
+    except ValueError:
+        state.pool_state.plate_pool[take_idx_land] = None
+
     state.pool_state.animal_pool[take_idx_animal] = state.bag.sample_animal_plate()
 
     player_state.to_place = (animal, base_plate)
@@ -145,6 +164,8 @@ def place_animal(state: GameState, action: Action, active_player_idx: int):
 
     if place_idx is not None:
         land_state[place_idx].built_animal = animal
+        if len(land_state[place_idx].animals) == 1:
+            player_state.pine_cones += 1
     else:
         state.bag.animal_plates[animal] += 1
 
@@ -170,3 +191,5 @@ def action_transition(state: GameState, action: Action, active_player_idx: int):
             state.players[active_player_idx].has_rerolled = False
             state.active_player = (active_player_idx + 1) % len(state.players)
             state.game_phase = state.game_phase.PICKING
+
+        

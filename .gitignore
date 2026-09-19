@@ -6,5 +6,9 @@ dist/
 wheels/
 *.egg-info
 
+src/runs
+src/wandb
+.vscode
+
 # Virtual environments
 .venv

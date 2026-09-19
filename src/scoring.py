@@ -39,14 +39,14 @@ def form_rerooting(form):
 
     for base_form in rotated_forms:
         for di, dj in base_form:
-            new_form = [(i-di, j-dj) for i,j in form]
+            new_form = tuple([(i-di, j-dj) for i,j in form])
             rerooted_forms.add(new_form)
 
     return rerooted_forms
 
 
 def bruteforce_form_fit(nodes, forms, scores):
-    score_callbacks = [lambda i=i: i for i in scores]
+    score_callbacks = [lambda _, i=i: i for i in scores]
     return bruteforce_form_fit_from_callback(nodes, forms, score_callbacks)
 
 
@@ -62,14 +62,14 @@ def bruteforce_form_fit_from_callback(nodes, forms, score_callbacks):
         for form, score_callback in zip(forms, score_callbacks):
             for rerooted_form in form_rerooting(form):
                 to_test = [(root_i+di, root_j+dj) for di, dj in rerooted_form]
-                if all(t in nodes for t in to_test):
+                if all(t in remaining_nodes for t in to_test):
                     score = score_callback(to_test)
                     new_remaining = remaining_nodes - set(to_test)
-                    best_score = score + max(best_score, score_callback + solve(new_remaining))
+                    best_score = max(best_score, score + solve(new_remaining))
         return best_score
 
 
-    return solve(frozenset(nodes, forms, score_callbacks))
+    return solve(frozenset(nodes))
 
 
 def flood(start_nodes: list, edges: list):
@@ -221,7 +221,7 @@ def score_hawk_a(game_state: GameState, active_player_idx: int):
     player_state = game_state.players[active_player_idx]
     land_state = player_state.plate_grid
     groups = flood_fill_animals(land_state, Animal.HAWK)
-    single_count = len(g for g in groups if len(g) == 1)
+    single_count = len([g for g in groups if len(g) == 1])
     val_per_single = [0, 2, 5, 8, 11, 14, 18, 22, 26]
 
     single_count = min(single_count, len(val_per_single)-1)
@@ -630,6 +630,32 @@ def land_extra_points(game_state: GameState):
             final_player_scores[i][land] = second_top_bonus
 
     return final_player_scores
+
+def full_player_score(game_state: GameState, player_idx: int):
+    animal_scores = {}
+    total_score = 0
+
+    for animal in Animal:
+        animal_score = get_scoring_method_for(animal)(game_state, player_idx)
+        animal_scores[animal] = animal_score
+
+    land_scores = score_land(game_state, player_idx)
+    land_extra = land_extra_points(game_state)[player_idx]
+
+    total_score += sum(animal_scores.values())
+    total_score += sum(land_scores.values())
+    total_score += sum(land_extra.values())
+    total_score += game_state.players[player_idx].pine_cones
+
+    score_summary = {
+        'animal_scores': animal_scores,
+        'land_scores': land_scores,
+        'land_extra': land_extra,
+        'pine_cones': game_state.players[player_idx].pine_cones,
+    }
+
+    return total_score, score_summary
+
 
         
 
