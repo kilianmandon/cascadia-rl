@@ -177,6 +177,8 @@ def compute_action_mask(game_state: GameState, player_idx: int):
             # The "reject animal" option
             mask[n_actions_prefix[5] + max_size**2] = True
 
+    if np.all(mask==False):
+        ...
     return mask
 
 

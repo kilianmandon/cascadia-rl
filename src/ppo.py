@@ -39,11 +39,11 @@ class Args:
     # Algorithm specific arguments
     env_id: str = "CartPole-v1"
     """the id of the environment"""
-    total_timesteps: int = 500000
+    total_timesteps: int = 5_000_000
     """total timesteps of the experiments"""
     learning_rate: float = 2.5e-4
     """the learning rate of the optimizer"""
-    num_envs: int = 8
+    num_envs: int = 1
     """the number of parallel game environments"""
     num_steps: int = 100
     """the number of steps to run in each environment per policy rollout"""
@@ -53,7 +53,7 @@ class Args:
     """the discount factor gamma"""
     gae_lambda: float = 0.95
     """the lambda for the general advantage estimation"""
-    num_minibatches: int = 8
+    num_minibatches: int = 1
     """the number of mini-batches"""
     update_epochs: int = 4
     """the K epochs to update the policy"""
@@ -63,7 +63,7 @@ class Args:
     """the surrogate clipping coefficient"""
     clip_vloss: bool = True
     """Toggles whether or not to use a clipped loss for the value function, as per the paper."""
-    ent_coef: float = 0.01
+    ent_coef: float = 100
     """coefficient of the entropy"""
     vf_coef: float = 0.5
     """coefficient of the value function"""
@@ -145,7 +145,10 @@ class Agent(nn.Module):
         logits, value = self.actor_critic(x)
         if action_mask is not None:
             logits[~action_mask] -= 1e8
+        unmasked_count = torch.count_nonzero(logits > -1e3, dim=-1).float().mean().item()
+        print(f'Ummasked: {unmasked_count}')
         probs = Categorical(logits=logits)
+        entropy = probs.entropy()
         if action is None:
             action = probs.sample()
         return action, probs.log_prob(action), probs.entropy(), value
@@ -192,7 +195,7 @@ if __name__ == "__main__":
         device = torch.device('cpu')
 
     # env setup
-    envs = gym.vector.SyncVectorEnv(
+    envs = gym.vector.AsyncVectorEnv(
         [make_env(args.env_id, i, args.capture_video, run_name) for i in range(args.num_envs)],
     )
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
