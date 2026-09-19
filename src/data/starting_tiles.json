@@ -1,0 +1,149 @@
+{
+  "starting_tiles": [
+    {
+      "id": "START_1",
+      "base_plates": [
+        {
+          "animals": [
+            "HAWK"
+          ],
+          "left_landscape": "WETLAND",
+          "right_landscape": "WETLAND"
+        },
+        {
+          "animals": [
+            "SALMON",
+            "DEER",
+            "HAWK"
+          ],
+          "left_landscape": "FOREST",
+          "right_landscape": "RIVER"
+        },
+        {
+          "animals": [
+            "GRIZZLY",
+            "FOX"
+          ],
+          "left_landscape": "MOUNTAIN",
+          "right_landscape": "PLAINS"
+        }
+      ]
+    },
+    {
+      "id": "START_2",
+      "base_plates": [
+        {
+          "animals": [
+            "DEER"
+          ],
+          "left_landscape": "FOREST",
+          "right_landscape": "FOREST"
+        },
+        {
+          "animals": [
+            "HAWK",
+            "DEER",
+            "GRIZZLY"
+          ],
+          "left_landscape": "RIVER",
+          "right_landscape": "MOUNTAIN"
+        },
+        {
+          "animals": [
+            "FOX",
+            "SALMON"
+          ],
+          "left_landscape": "PLAINS",
+          "right_landscape": "WETLAND"
+        }
+      ]
+    },
+    {
+      "id": "START_3",
+      "base_plates": [
+        {
+          "animals": [
+            "FOX"
+          ],
+          "left_landscape": "PLAINS",
+          "right_landscape": "PLAINS"
+        },
+        {
+          "animals": [
+            "SALMON",
+            "HAWK",
+            "FOX"
+          ],
+          "left_landscape": "RIVER",
+          "right_landscape": "WETLAND"
+        },
+        {
+          "animals": [
+            "GRIZZLY",
+            "DEER"
+          ],
+          "left_landscape": "MOUNTAIN",
+          "right_landscape": "FOREST"
+        }
+      ]
+    },
+    {
+      "id": "START_4",
+      "base_plates": [
+        {
+          "animals": [
+            "GRIZZLY"
+          ],
+          "left_landscape": "MOUNTAIN",
+          "right_landscape": "MOUNTAIN"
+        },
+        {
+          "animals": [
+            "HAWK",
+            "DEER",
+            "FOX"
+          ],
+          "left_landscape": "WETLAND",
+          "right_landscape": "FOREST"
+        },
+        {
+          "animals": [
+            "SALMON",
+            "GRIZZLY"
+          ],
+          "left_landscape": "PLAINS",
+          "right_landscape": "RIVER"
+        }
+      ]
+    },
+    {
+      "id": "START_5",
+      "base_plates": [
+        {
+          "animals": [
+            "SALMON"
+          ],
+          "left_landscape": "RIVER",
+          "right_landscape": "RIVER"
+        },
+        {
+          "animals": [
+            "SALMON",
+            "DEER",
+            "GRIZZLY"
+          ],
+          "left_landscape": "FOREST",
+          "right_landscape": "PLAINS"
+        },
+        {
+          "animals": [
+            "FOX",
+            "HAWK"
+          ],
+          "left_landscape": "WETLAND",
+          "right_landscape": "MOUNTAIN"
+        }
+      ]
+    }
+  ]
+}
