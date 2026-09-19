@@ -245,13 +245,11 @@ if __name__ == "__main__":
             next_action_mask = torch.tensor(next_action_mask).to(device)
 
             if "final_info" in infos:
-                print('Final Info availalble')
                 info = infos['final_info']
                 if info and "episode" in info:
-                    print('Episode info available')
                     for i, (r, l, terminated) in enumerate(zip(info['episode']['r'], info['episode']['l'], info['episode']['terminated'])):
                         if terminated:
-                            print(f"global_step={global_step}, episodic_return={r} terminated={info['episode']['terminated'][i]}")
+                            # print(f"global_step={global_step}, episodic_return={r} terminated={info['episode']['terminated'][i]}")
                             writer.add_scalar("charts/episodic_return", r, global_step)
                             writer.add_scalar("charts/episodic_length", l, global_step)
 
