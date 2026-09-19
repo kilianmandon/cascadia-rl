@@ -43,7 +43,7 @@ class Args:
     """total timesteps of the experiments"""
     learning_rate: float = 2.5e-4
     """the learning rate of the optimizer"""
-    num_envs: int = 32
+    num_envs: int = 8
     """the number of parallel game environments"""
     num_steps: int = 100
     """the number of steps to run in each environment per policy rollout"""
@@ -53,7 +53,7 @@ class Args:
     """the discount factor gamma"""
     gae_lambda: float = 0.95
     """the lambda for the general advantage estimation"""
-    num_minibatches: int = 4
+    num_minibatches: int = 8
     """the number of mini-batches"""
     update_epochs: int = 4
     """the K epochs to update the policy"""
@@ -94,6 +94,8 @@ class ActorCriticModel(nn.Module):
     def __init__(self, n_channels, n_actions):
         super().__init__()
         self.backbone = nn.Sequential(
+            # nn.Conv2d(n_channels, 128, kernel_size=1),
+            # nn.ReLU(),
             nn.Conv2d(n_channels, 64, kernel_size=1),
             nn.ReLU(),
             nn.Conv2d(64, 64, kernel_size=3, padding='same'),
@@ -223,6 +225,8 @@ if __name__ == "__main__":
             lrnow = frac * args.learning_rate
             optimizer.param_groups[0]["lr"] = lrnow
 
+        print('Gathering experience.')
+        t0 = time.time()
         for step in range(0, args.num_steps):
             global_step += args.num_envs
             obs[step] = next_obs
@@ -253,6 +257,9 @@ if __name__ == "__main__":
                             writer.add_scalar("charts/episodic_return", r, global_step)
                             writer.add_scalar("charts/episodic_length", l, global_step)
 
+        t1 = time.time()
+        print(f'Env SPS: {100*args.num_envs / (t1-t0)}')
+        print('Bootstrapping value')
         # bootstrap value if not done
         with torch.no_grad():
             next_value = agent.get_value(next_obs).reshape(1, -1)
@@ -281,9 +288,9 @@ if __name__ == "__main__":
         # Optimizing the policy and value network
         b_inds = np.arange(args.batch_size)
         clipfracs = []
+        print('Starting update cycle...')
         for epoch in range(args.update_epochs):
             np.random.shuffle(b_inds)
-            print('Epoch done')
             for start in range(0, args.batch_size, args.minibatch_size):
                 end = start + args.minibatch_size
                 mb_inds = b_inds[start:end]
@@ -336,6 +343,7 @@ if __name__ == "__main__":
         y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
         var_y = np.var(y_true)
         explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
+        print('Done')
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)

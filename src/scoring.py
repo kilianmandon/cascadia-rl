@@ -45,9 +45,16 @@ def form_rerooting(form):
     return rerooted_forms
 
 
-def bruteforce_form_fit(nodes, forms, scores):
+@lru_cache
+def caching_form_fit(nodes, forms, scores):
     score_callbacks = [lambda _, i=i: i for i in scores]
     return bruteforce_form_fit_from_callback(nodes, forms, score_callbacks)
+
+def bruteforce_form_fit(nodes, forms, scores):
+    def to_tuple(ls):
+        return tuple(to_tuple(i) if isinstance(i, list) else i for i in ls)
+
+    return caching_form_fit(to_tuple(sorted(nodes)), to_tuple(forms), to_tuple(scores))
 
 
 def bruteforce_form_fit_from_callback(nodes, forms, score_callbacks):
