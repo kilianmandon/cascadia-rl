@@ -100,7 +100,7 @@ def flood(start_nodes: list, edges: list):
     return groups
 
 def flood_fill_animals(land_state: dict[tuple[int, int], BuiltPlate], animal: Animal):
-    start_nodes = [p for p, plate in land_state.items() if animal in plate.animals]
+    start_nodes = [p for p, plate in land_state.items() if animal == plate.built_animal]
     edges = []
 
     for (i, j) in start_nodes:
@@ -124,11 +124,15 @@ def flood_fill_land(land_state: dict[tuple[int, int], BuiltPlate], land: Landsca
     for (i, j) in start_nodes:
         plate = land_state[(i,j)]
         local_neighbor_dirs = neighbor_dirs_by_orientation[plate.orientation]
+        dirs_to_check = []
         if plate.right_landscape == land:
-            for (di, dj) in local_neighbor_dirs[:3]:
-                ii, jj = (i+di, j+dj)
-                if (ii, jj) in start_nodes:
-                    possible_edges.append( ((i, j), (ii, jj)) )
+            dirs_to_check += local_neighbor_dirs[:3]
+        if plate.left_landscape == land:
+            dirs_to_check += local_neighbor_dirs[3:]
+        for (di, dj) in dirs_to_check:
+            ii, jj = (i+di, j+dj)
+            if (ii, jj) in start_nodes:
+                possible_edges.append( ((i, j), (ii, jj)) )
 
     edges = []
     for (p1, p2) in possible_edges:
@@ -179,7 +183,7 @@ def score_grizzly_a(game_state: GameState, active_player_idx: int):
     land_state = player_state.plate_grid
 
     groups = flood_fill_animals(land_state, Animal.GRIZZLY)
-    couples = [g for g in groups if len(groups) == 2]
+    couples = [g for g in groups if len(g) == 2]
     match len(couples):
         case 0:
             return 0

@@ -18,9 +18,13 @@ import tkinter as tk
 from tkinter import ttk
 from typing import Callable, Mapping
 
+import torch
+
 from base_types import Action, ActionKind, Animal, BasePlate, BuiltPlate, GamePhase, GameState, Landscape
 from game import action_transition, place_animal_mask, place_land_plate_mask, reroll_all_mask, reroll_three_mask
+from ppo import Agent
 from scoring import get_scoring_method_for, land_extra_points, score_land
+from state_encoding import action_from_index, compute_action_mask, compute_state
 
 
 LAND_COLORS = {
@@ -135,6 +139,10 @@ class CascadiaUI(tk.Tk):
 
     def refresh(self) -> None:
         state = self.state
+        
+        stop_when_remaining = 81 - 20*len(state.players)
+        gameover = (len(state.bag.base_plates) <= stop_when_remaining) and state.game_phase==GamePhase.PICKING
+
         phase = state.game_phase.name.replace("_", " ").title()
         active = state.active_player + 1
         held = state.players[state.active_player].to_place
@@ -150,9 +158,10 @@ class CascadiaUI(tk.Tk):
         self.mixed_button.configure(text=("Cancel mixed" if self.mixed_mode else "Take mixed  ●"))
         self.draw_pool(preview)
         self.draw_scores()
-        self.draw_autoplay()
+        if not gameover:
+            self.draw_autoplay()
         self.draw_board(preview)
-        if preview:
+        if preview and not gameover:
             self.after(350, self.maybe_autoplay)
 
     def draw_autoplay(self) -> None:
@@ -330,6 +339,34 @@ class CascadiaUI(tk.Tk):
         if not action: return ""
         return action.kind.name.replace("_", " ").title() + (f" {action.params}" if action.params else "")
 
+def build_policy():
+    from ppo import ActorCriticModel
+    from config import CONFIG
+
+    grid_size = CONFIG.MAX_GRID_SIZE
+    observation_grid_channels = 40
+    observation_single_channels = 1*10 + 80 + 3
+    n_channels = observation_grid_channels + observation_single_channels
+    action_count = 1+1+4+16+6*grid_size**2 + (grid_size**2+1)
+    model = Agent()
+
+    def policy(game_state: GameState) -> Action:
+        player_idx = game_state.active_player
+        action_mask = torch.tensor(compute_action_mask(game_state, player_idx))
+        state = torch.tensor(compute_state(game_state, player_idx)).float()
+
+        state = state[None, ...]
+        action_mask = action_mask[None, ...]
+
+        action_idx, log_prob, entropy, value = model.get_action_and_value(state, action_mask=action_mask)
+        action_idx = action_idx.item()
+        action = action_from_index(game_state, player_idx, action_idx)
+
+        return action
+
+    return policy
+
+
 
 def launch(players: int = 2, policies: Mapping[int, Callable[[GameState], Action]] | None = None) -> CascadiaUI:
     state = GameState(players)
@@ -341,6 +378,9 @@ def launch(players: int = 2, policies: Mapping[int, Callable[[GameState], Action
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Launch the standalone Cascadia UI")
-    parser.add_argument("--players", type=int, default=2, choices=range(1, 6))
+    parser.add_argument("--players", type=int, default=1, choices=range(1, 6))
+    policies = {
+        0: build_policy()
+    }
     args = parser.parse_args()
-    launch(args.players)
+    launch(args.players, policies)

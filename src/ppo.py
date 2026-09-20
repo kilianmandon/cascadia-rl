@@ -127,7 +127,7 @@ class ActorCriticModel(nn.Module):
 
 
 class Agent(nn.Module):
-    def __init__(self, envs):
+    def __init__(self, envs=None):
         super().__init__()
         grid_size = CONFIG.MAX_GRID_SIZE
         observation_grid_channels = 40
