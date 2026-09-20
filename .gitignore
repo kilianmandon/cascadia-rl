@@ -8,6 +8,7 @@ wheels/
 
 src/runs
 src/wandb
+src/checkpoints
 .vscode
 
 # Virtual environments

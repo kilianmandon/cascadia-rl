@@ -37,13 +37,13 @@ class Args:
     """whether to capture videos of the agent performances (check out `videos` folder)"""
 
     # Algorithm specific arguments
-    env_id: str = "CartPole-v1"
+    env_id: str = "Cascadia"
     """the id of the environment"""
     total_timesteps: int = 5_000_000
     """total timesteps of the experiments"""
     learning_rate: float = 2.5e-4
     """the learning rate of the optimizer"""
-    num_envs: int = 4
+    num_envs: int = 32
     """the number of parallel game environments"""
     num_steps: int = 100
     """the number of steps to run in each environment per policy rollout"""
@@ -53,7 +53,7 @@ class Args:
     """the discount factor gamma"""
     gae_lambda: float = 0.95
     """the lambda for the general advantage estimation"""
-    num_minibatches: int = 4
+    num_minibatches: int = 16
     """the number of mini-batches"""
     update_epochs: int = 4
     """the K epochs to update the policy"""
@@ -79,6 +79,47 @@ class Args:
     """the mini-batch size (computed in runtime)"""
     num_iterations: int = 0
     """the number of iterations (computed in runtime)"""
+
+def save_checkpoint(agent, optimizer, iteration, global_step, path, args, upload_to_wandb=False):
+    torch.save(
+        {
+            "model_state_dict": agent.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "iteration": iteration,
+            "global_step": global_step,
+            "args": vars(args),
+        },
+        path,
+    )
+    if upload_to_wandb:
+        import wandb
+        artifact = wandb.Artifact(
+            name=f"model-{wandb.run.id}",
+            type="model",
+            metadata={"iteration": iteration, "global_step": global_step},
+        )
+        artifact.add_file(path)
+        wandb.log_artifact(artifact)
+
+
+def save_checkpoint(agent, optimizer, iteration, global_step, path, args, upload_to_wandb=False):
+    torch.save({
+        "model_state_dict": agent.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "iteration": iteration,
+        "global_step": global_step,
+        "args": vars(args),
+    }, path)
+
+    if upload_to_wandb:
+        import wandb
+        artifact = wandb.Artifact(
+            name=f'model-{wandb.run.id}',
+            type='model',
+            metadata={'iteration': iteration, 'global_step': global_step},
+        )
+        artifact.add_file(path)
+        wandb.log_artifact(artifact)
 
 
 def make_env(env_id, idx, capture_video, run_name):
@@ -170,6 +211,10 @@ if __name__ == "__main__":
             monitor_gym=True,
             save_code=True,
         )
+
+    ckpt_dir = f"checkpoints/{run_name}"
+    os.makedirs(ckpt_dir, exist_ok=True)
+
     writer = SummaryWriter(f"runs/{run_name}")
     writer.add_text(
         "hyperparameters",
@@ -223,6 +268,7 @@ if __name__ == "__main__":
         # Annealing the rate if instructed to do so.
         if args.anneal_lr:
             frac = 1.0 - (iteration - 1.0) / args.num_iterations
+            frac = max(frac, 0.2)
             lrnow = frac * args.learning_rate
             optimizer.param_groups[0]["lr"] = lrnow
 
@@ -360,5 +406,13 @@ if __name__ == "__main__":
         print("SPS:", int(global_step / (time.time() - start_time)))
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
+        checkpoint_every = max(1, args.num_iterations // 10)
+        if iteration%checkpoint_every==0:
+            ckpt_path = f'{ckpt_dir}/iter_{iteration}.pt'
+            save_checkpoint(agent, optimizer, iteration, global_step, ckpt_path, args, upload_to_wandb=args.track)
+
+
     envs.close()
+    final_path = f'{ckpt_dir}/final.pt'
+    save_checkpoint(agent, optimizer, iteration, global_step, final_path, args, upload_to_wandb=args.track)
     writer.close()
