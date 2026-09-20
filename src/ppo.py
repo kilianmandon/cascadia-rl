@@ -80,27 +80,6 @@ class Args:
     num_iterations: int = 0
     """the number of iterations (computed in runtime)"""
 
-def save_checkpoint(agent, optimizer, iteration, global_step, path, args, upload_to_wandb=False):
-    torch.save(
-        {
-            "model_state_dict": agent.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
-            "iteration": iteration,
-            "global_step": global_step,
-            "args": vars(args),
-        },
-        path,
-    )
-    if upload_to_wandb:
-        import wandb
-        artifact = wandb.Artifact(
-            name=f"model-{wandb.run.id}",
-            type="model",
-            metadata={"iteration": iteration, "global_step": global_step},
-        )
-        artifact.add_file(path)
-        wandb.log_artifact(artifact)
-
 
 def save_checkpoint(agent, optimizer, iteration, global_step, path, args, upload_to_wandb=False):
     torch.save({
