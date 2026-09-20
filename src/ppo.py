@@ -43,7 +43,7 @@ class Args:
     """total timesteps of the experiments"""
     learning_rate: float = 2.5e-4
     """the learning rate of the optimizer"""
-    num_envs: int = 1
+    num_envs: int = 4
     """the number of parallel game environments"""
     num_steps: int = 100
     """the number of steps to run in each environment per policy rollout"""
@@ -53,7 +53,7 @@ class Args:
     """the discount factor gamma"""
     gae_lambda: float = 0.95
     """the lambda for the general advantage estimation"""
-    num_minibatches: int = 1
+    num_minibatches: int = 4
     """the number of mini-batches"""
     update_epochs: int = 4
     """the K epochs to update the policy"""
@@ -63,7 +63,7 @@ class Args:
     """the surrogate clipping coefficient"""
     clip_vloss: bool = True
     """Toggles whether or not to use a clipped loss for the value function, as per the paper."""
-    ent_coef: float = 100
+    ent_coef: float = 0.01
     """coefficient of the entropy"""
     vf_coef: float = 0.5
     """coefficient of the value function"""
@@ -145,8 +145,6 @@ class Agent(nn.Module):
         logits, value = self.actor_critic(x)
         if action_mask is not None:
             logits[~action_mask] -= 1e8
-        unmasked_count = torch.count_nonzero(logits > -1e3, dim=-1).float().mean().item()
-        print(f'Ummasked: {unmasked_count}')
         probs = Categorical(logits=logits)
         entropy = probs.entropy()
         if action is None:
@@ -280,7 +278,7 @@ if __name__ == "__main__":
             returns = advantages + values
 
         # flatten the batch
-        b_action_mask = action_masks.reshape((-1,) + envs.single_action_space.shape)
+        b_action_mask = action_masks.reshape((-1,) + (envs.single_action_space.n,))
         b_obs = obs.reshape((-1,) + envs.single_observation_space.shape)
         b_logprobs = logprobs.reshape(-1)
         b_actions = actions.reshape((-1,) + envs.single_action_space.shape)
@@ -334,6 +332,8 @@ if __name__ == "__main__":
 
                 entropy_loss = entropy.mean()
                 loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
+                # loss = -args.ent_coef * entropy_loss + v_loss * args.vf_coef
+                # loss = - args.ent_coef * entropy_loss
 
                 optimizer.zero_grad()
                 loss.backward()
