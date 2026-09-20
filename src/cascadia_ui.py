@@ -349,6 +349,7 @@ def build_policy():
     n_channels = observation_grid_channels + observation_single_channels
     action_count = 1+1+4+16+6*grid_size**2 + (grid_size**2+1)
     model = Agent()
+    model.load_state_dict(torch.load('data/final.pt', map_location='cpu')["model_state_dict"])
 
     def policy(game_state: GameState) -> Action:
         player_idx = game_state.active_player

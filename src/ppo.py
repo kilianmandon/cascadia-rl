@@ -65,6 +65,8 @@ class Args:
     """Toggles whether or not to use a clipped loss for the value function, as per the paper."""
     ent_coef: float = 0.01
     """coefficient of the entropy"""
+    use_normalized_entropy: bool = False
+    """Toggles whether entropy is normalized with the action mask."""
     vf_coef: float = 0.5
     """coefficient of the value function"""
     max_grad_norm: float = 0.5
@@ -355,7 +357,16 @@ if __name__ == "__main__":
                 else:
                     v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
 
-                entropy_loss = entropy.mean()
+                unmasked_action_count = b_action_mask[mb_inds].float().sum(dim=-1)
+                low_action_entropy_mean = entropy[unmasked_action_count<10].mean()
+                high_action_entropy_mean = entropy[unmasked_action_count>=10].mean()
+                normalized_entropy = (entropy / torch.log(unmasked_action_count.clamp(min=2))).mean()
+
+                if not args.use_normalized_entropy:
+                    entropy_loss = entropy.mean()
+                else:
+                    entropy_loss = normalized_entropy
+
                 loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
                 # loss = -args.ent_coef * entropy_loss + v_loss * args.vf_coef
                 # loss = - args.ent_coef * entropy_loss
@@ -382,6 +393,10 @@ if __name__ == "__main__":
         writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
         writer.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
         writer.add_scalar("losses/explained_variance", explained_var, global_step)
+        writer.add_scalar("losses/low_action_count_entropy", low_action_entropy_mean, global_step)
+        writer.add_scalar("losses/high_action_count_entropy", high_action_entropy_mean, global_step)
+        writer.add_scalar("losses/normalized_entropy", normalized_entropy, global_step)
+
         print("SPS:", int(global_step / (time.time() - start_time)))
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 

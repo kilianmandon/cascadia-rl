@@ -39,7 +39,7 @@ def form_rerooting(form):
 
     for base_form in rotated_forms:
         for di, dj in base_form:
-            new_form = tuple([(i-di, j-dj) for i,j in form])
+            new_form = tuple([(i-di, j-dj) for i,j in base_form])
             rerooted_forms.add(new_form)
 
     return rerooted_forms
