@@ -1,4 +1,5 @@
 import gymnasium as gym
+import numpy as np
 from game import action_transition
 from scoring import full_player_score
 from state_encoding import action_from_index, compute_action_mask, compute_state
@@ -35,9 +36,12 @@ class SinglePlayerEnv(gym.Env):
         }
 
     def reset(self, seed=None, options=None):
+        seed = 5
         super().reset(seed=seed)
+        print(f'Seeding environment with {seed}')
+        self.generator = np.random.default_rng(seed=seed)
 
-        self.game_state = GameState(n_players=1)
+        self.game_state = GameState(n_players=1, generator=self.generator)
         self.game_state.init_game()
 
         return self._get_obs(), self._get_info()

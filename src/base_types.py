@@ -1,7 +1,6 @@
 from dataclasses import dataclass, field
 import json
 import numpy as np
-import random
 from pathlib import Path
 from enum import Enum
 
@@ -87,12 +86,16 @@ def load_base_plate_config() -> dict:
 class PlateBag:
     base_plates: list[BasePlate] = field(default_factory=load_base_plate_config)
     animal_plates : dict[Animal, int] = field(default_factory=lambda: {animal: 20 for animal in Animal})
+    generator: np.random.Generator = None
 
     def sample_base_plate(self) -> BasePlate:
         if not self.base_plates:
             raise ValueError("No more base plates available in the bag.")
 
-        plate_idx = random.randint(0, len(self.base_plates) - 1)
+        if self.generator is not None:
+            plate_idx = self.generator.integers(0, len(self.base_plates)-1)
+        else:
+            plate_idx = np.random.randint(0, len(self.base_plates) - 1)
         return self.base_plates.pop(plate_idx)
 
     def sample_animal_plate(self) -> Animal:
@@ -101,7 +104,10 @@ class PlateBag:
 
         counts = np.array([self.animal_plates[a] for a in Animal])
         p = counts / np.sum(counts)
-        animal = np.random.choice(list(Animal), p=p)
+        if self.generator is not None:
+            animal = self.generator.choice(list(Animal), p=p)
+        else:
+            animal = np.random.choice(list(Animal), p=p)
         self.animal_plates[animal] -= 1
         return animal
 
@@ -117,10 +123,12 @@ class GameState:
     pool_state: PoolState
     game_phase: GamePhase
     active_player: int
+    generator: np.random.Generator
 
-    def __init__(self, n_players: int):
+    def __init__(self, n_players: int, generator: np.random.Generator):
         self.players: list[PlayerState] = [PlayerState() for _ in range(n_players)]
-        self.bag: PlateBag = PlateBag()
+        self.generator = generator
+        self.bag: PlateBag = PlateBag(generator=generator)
 
     def init_pool_state(self):
         plate_pool = [self.bag.sample_base_plate() for _ in range(4)]
@@ -133,7 +141,7 @@ class GameState:
             starting_tiles_data = json.load(f)['starting_tiles']
 
         for i in range(len(self.players)):
-            idx = random.randrange(len(starting_tiles_data))
+            idx = self.generator.integers(len(starting_tiles_data))
             starting_tile = starting_tiles_data.pop(idx)
             plates = [parse_base_plate(plate_data) for plate_data in starting_tile['base_plates']]
             self.players[i].plate_grid = {

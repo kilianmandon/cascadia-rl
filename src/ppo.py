@@ -41,7 +41,7 @@ class Args:
     """the id of the environment"""
     total_timesteps: int = 5_000_000
     """total timesteps of the experiments"""
-    learning_rate: float = 2.5e-4
+    learning_rate: float = 2.5e-3
     """the learning rate of the optimizer"""
     num_envs: int = 32
     """the number of parallel game environments"""
@@ -171,6 +171,7 @@ class Agent(nn.Module):
         entropy = probs.entropy()
         if action is None:
             action = probs.sample()
+        # action = action_mask.int().argmax(dim=-1)
         return action, probs.log_prob(action), probs.entropy(), value
 
 
@@ -253,6 +254,12 @@ if __name__ == "__main__":
             lrnow = frac * args.learning_rate
             optimizer.param_groups[0]["lr"] = lrnow
 
+        next_obs, next_info = envs.reset(seed=args.seed)
+        next_action_mask = next_info['action_mask']
+        next_obs = torch.Tensor(next_obs).to(device)
+        next_action_mask = torch.tensor(next_action_mask, dtype=bool).to(device)
+        next_done = torch.zeros(args.num_envs).to(device)
+
         print('Gathering experience.')
         t0 = time.time()
         for step in range(0, args.num_steps):
@@ -279,11 +286,17 @@ if __name__ == "__main__":
             if "final_info" in infos:
                 info = infos['final_info']
                 if info and "episode" in info:
+                    all_episodic_returns = []
+                    all_episodic_lengths = []
+                    
                     for i, (r, l, terminated) in enumerate(zip(info['episode']['r'], info['episode']['l'], info['episode']['terminated'])):
                         if terminated:
                             # print(f"global_step={global_step}, episodic_return={r} terminated={info['episode']['terminated'][i]}")
-                            writer.add_scalar("charts/episodic_return", r, global_step)
-                            writer.add_scalar("charts/episodic_length", l, global_step)
+                            all_episodic_returns.append(r)
+                            all_episodic_lengths.append(l)
+                    if len(all_episodic_returns) > 0:
+                        writer.add_scalar("charts/episodic_return", np.mean(np.array(all_episodic_returns)), global_step)
+                        writer.add_scalar("charts/episodic_length", np.mean(np.array(all_episodic_lengths)), global_step)
 
         t1 = time.time()
         print(f'Env SPS: {100*args.num_envs / (t1-t0)}')

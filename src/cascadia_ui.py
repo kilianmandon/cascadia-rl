@@ -18,6 +18,7 @@ import tkinter as tk
 from tkinter import ttk
 from typing import Callable, Mapping
 
+import numpy as np
 import torch
 
 from base_types import Action, ActionKind, Animal, BasePlate, BuiltPlate, GamePhase, GameState, Landscape
@@ -359,7 +360,8 @@ def build_policy():
         state = state[None, ...]
         action_mask = action_mask[None, ...]
 
-        action_idx, log_prob, entropy, value = model.get_action_and_value(state, action_mask=action_mask)
+        # action_idx, log_prob, entropy, value = model.get_action_and_value(state, action_mask=action_mask)
+        action_idx = action_mask.int().argmax(dim=-1)
         action_idx = action_idx.item()
         action = action_from_index(game_state, player_idx, action_idx)
 
@@ -370,7 +372,7 @@ def build_policy():
 
 
 def launch(players: int = 2, policies: Mapping[int, Callable[[GameState], Action]] | None = None) -> CascadiaUI:
-    state = GameState(players)
+    state = GameState(players, np.random.default_rng(5))
     state.init_game()
     app = CascadiaUI(state, policies)
     app.mainloop()
