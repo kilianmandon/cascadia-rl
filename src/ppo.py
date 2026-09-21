@@ -63,7 +63,7 @@ class Args:
     """the surrogate clipping coefficient"""
     clip_vloss: bool = True
     """Toggles whether or not to use a clipped loss for the value function, as per the paper."""
-    ent_coef: float = 0.05
+    ent_coef: float = 0.025
     """coefficient of the entropy"""
     use_normalized_entropy: bool = True
     """Toggles whether entropy is normalized with the action mask."""
@@ -158,8 +158,12 @@ class SpatialActorCriticModel(nn.Module):
     def forward(self, x):
         x =  torch.einsum('...ijc->...cij', x)
         x = self.backbone(x)
-        land_place_logits = self.land_place_actor_head(x).transpose(-1, -3)
-        animal_place_logits = self.animal_place_actor_head(x).transpose(-1, -3)
+        land_place_logits = self.land_place_actor_head(x)
+        animal_place_logits = self.animal_place_actor_head(x)
+
+        land_place_logits = torch.einsum('...cij->...ijc', land_place_logits)
+        animal_place_logits = torch.einsum('...cij->...ijc', animal_place_logits)
+
         one_dim_action = self.one_dim_action_head(x)
 
         action_logits = torch.cat([
