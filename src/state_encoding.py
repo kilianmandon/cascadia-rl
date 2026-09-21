@@ -189,6 +189,7 @@ def compute_action_mask(game_state: GameState, player_idx: int):
 # 16: Take Mixed
 # max_size**2 * 6: place land
 # max_size**2: place animal
+# 1: reject animal
 def action_from_index(game_state: GameState, player_idx: int, action_idx: int):
     player_state = game_state.players[player_idx]
     land_state = player_state.plate_grid

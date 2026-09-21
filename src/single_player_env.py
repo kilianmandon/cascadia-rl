@@ -36,9 +36,7 @@ class SinglePlayerEnv(gym.Env):
         }
 
     def reset(self, seed=None, options=None):
-        seed = 5
         super().reset(seed=seed)
-        print(f'Seeding environment with {seed}')
         self.generator = np.random.default_rng(seed=seed)
 
         self.game_state = GameState(n_players=1, generator=self.generator)

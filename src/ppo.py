@@ -39,11 +39,11 @@ class Args:
     # Algorithm specific arguments
     env_id: str = "Cascadia"
     """the id of the environment"""
-    total_timesteps: int = 5_000_000
+    total_timesteps: int = 50_000_000
     """total timesteps of the experiments"""
-    learning_rate: float = 2.5e-3
+    learning_rate: float = 2.5e-4
     """the learning rate of the optimizer"""
-    num_envs: int = 32
+    num_envs: int = 48
     """the number of parallel game environments"""
     num_steps: int = 100
     """the number of steps to run in each environment per policy rollout"""
@@ -63,9 +63,9 @@ class Args:
     """the surrogate clipping coefficient"""
     clip_vloss: bool = True
     """Toggles whether or not to use a clipped loss for the value function, as per the paper."""
-    ent_coef: float = 0.01
+    ent_coef: float = 0.05
     """coefficient of the entropy"""
-    use_normalized_entropy: bool = False
+    use_normalized_entropy: bool = True
     """Toggles whether entropy is normalized with the action mask."""
     vf_coef: float = 0.5
     """coefficient of the value function"""
@@ -110,6 +110,70 @@ def make_env(env_id, idx, capture_video, run_name):
         return env
 
     return thunk
+
+class SpatialActorCriticModel(nn.Module):
+    def __init__(self, n_channels, n_actions):
+        super().__init__()
+        self.backbone = nn.Sequential(
+            nn.Conv2d(n_channels, 64, kernel_size=1),
+            nn.ReLU(),
+            nn.Conv2d(64, 64, kernel_size=3, padding='same'),
+            nn.ReLU(),
+            nn.Conv2d(64, 64, kernel_size=3, padding='same'),
+            nn.ReLU(),
+            nn.Conv2d(64, 128, kernel_size=3, padding='same'),
+            nn.ReLU(),
+            nn.Conv2d(128, 128, kernel_size=3, padding='same'),
+            nn.ReLU(),
+        )
+
+        self.land_place_actor_head = nn.Sequential(
+            nn.Conv2d(128, 128, kernel_size=3, padding='same'),
+            nn.ReLU(),
+            nn.Conv2d(128, 6, kernel_size=1)
+        )
+
+        self.animal_place_actor_head = nn.Sequential(
+            nn.Conv2d(128, 128, kernel_size=3, padding='same'),
+            nn.ReLU(),
+            nn.Conv2d(128, 1, kernel_size=1)
+        )
+
+        self.one_dim_action_head = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Flatten(start_dim=-3),
+            nn.Linear(128, 128),
+            nn.ReLU(),
+            nn.Linear(128, 23)
+        )
+
+        self.value_head = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Flatten(start_dim=-3),
+            nn.Linear(128, 128),
+            nn.ReLU(),
+            nn.Linear(128, 1),
+        )
+
+    def forward(self, x):
+        x =  torch.einsum('...ijc->...cij', x)
+        x = self.backbone(x)
+        land_place_logits = self.land_place_actor_head(x).transpose(-1, -3)
+        animal_place_logits = self.animal_place_actor_head(x).transpose(-1, -3)
+        one_dim_action = self.one_dim_action_head(x)
+
+        action_logits = torch.cat([
+            one_dim_action[..., :-1],
+            torch.flatten(land_place_logits, start_dim=-3),
+            torch.flatten(animal_place_logits, start_dim=-3),
+            one_dim_action[..., -1:],
+        ], dim=-1)
+
+        value = self.value_head(x)
+
+        return action_logits, value
+
+
 
 
 class ActorCriticModel(nn.Module):
@@ -157,7 +221,7 @@ class Agent(nn.Module):
         action_count = 1+1+4+16+6*grid_size**2 + (grid_size**2+1)
 
         observation_channels = observation_grid_channels + observation_single_channels
-        self.actor_critic = ActorCriticModel(observation_channels, action_count)
+        self.actor_critic = SpatialActorCriticModel(observation_channels, action_count)
 
     def get_value(self, x):
         _, value = self.actor_critic(x)
@@ -254,11 +318,6 @@ if __name__ == "__main__":
             lrnow = frac * args.learning_rate
             optimizer.param_groups[0]["lr"] = lrnow
 
-        next_obs, next_info = envs.reset(seed=args.seed)
-        next_action_mask = next_info['action_mask']
-        next_obs = torch.Tensor(next_obs).to(device)
-        next_action_mask = torch.tensor(next_action_mask, dtype=bool).to(device)
-        next_done = torch.zeros(args.num_envs).to(device)
 
         print('Gathering experience.')
         t0 = time.time()

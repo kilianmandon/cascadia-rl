@@ -13,7 +13,7 @@ import pstats
 
 
 def main():
-    num_envs = 32
+    num_envs = 48
     envs = gym.vector.AsyncVectorEnv(
         [lambda: SinglePlayerEnv() for i in range(num_envs)],
         shared_memory=True
