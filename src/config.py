@@ -19,7 +19,14 @@ class Config:
         Animal.FOX: ScoringGroup.A,
         Animal.HAWK: ScoringGroup.A,
         Animal.DEER: ScoringGroup.A,
-
     }
-
-CONFIG = Config()
+    score_land = True
+    score_animals = {
+        Animal.GRIZZLY: True,
+        Animal.SALMON: True,
+        Animal.FOX: True,
+        Animal.HAWK: True,
+        Animal.DEER: True,
+    }
+    allow_rotating_land = True
+    score_land_bonus = False

@@ -5,7 +5,7 @@ from collections import Counter
 import numpy as np
 
 from base_types import Animal, BuiltPlate, GameState, Landscape
-from config import CONFIG, ScoringGroup
+from config import Config, ScoringGroup
 
 neighbor_dirs = [
     (1, 1), # Bottom right
@@ -541,8 +541,8 @@ def score_deer_d(game_state: GameState, active_player_idx: int):
     return total_score
 ###
 
-def get_scoring_method_for(animal: Animal):
-    scoring_group = CONFIG.scoring_groups[animal]
+def get_scoring_method_for(animal: Animal, config: Config):
+    scoring_group = config.scoring_groups[animal]
     scoring_bear = {
         ScoringGroup.A: score_grizzly_a,
         ScoringGroup.B: score_grizzly_b,
@@ -665,16 +665,26 @@ def single_animal_player_score(game_state: GameState, player_idx: int, animal: A
 
     return total_score, score_summary
 
-def full_player_score(game_state: GameState, player_idx: int):
+def full_player_score(game_state: GameState, player_idx: int, config: Config):
     animal_scores = {}
     total_score = 0
 
     for animal in Animal:
-        animal_score = get_scoring_method_for(animal)(game_state, player_idx)
+        if config.score_animals[animal]:
+            animal_score = get_scoring_method_for(animal, config)(game_state, player_idx)
+        else:
+            animal_score = 0
         animal_scores[animal] = animal_score
 
-    land_scores = score_land(game_state, player_idx)
-    land_extra = land_extra_points(game_state)[player_idx]
+    if config.score_land:
+        land_scores = score_land(game_state, player_idx)
+    else:
+        land_scores = { land: 0 for land in Landscape }
+
+    if config.score_land and config.score_land_bonus:
+        land_extra = land_extra_points(game_state)[player_idx]
+    else:
+        land_extra = { land: 0 for land in Landscape}
 
     total_score += sum(animal_scores.values())
     total_score += sum(land_scores.values())

@@ -13,7 +13,8 @@ import tyro
 from torch.distributions.categorical import Categorical
 from torch.utils.tensorboard import SummaryWriter
 
-from config import CONFIG
+from base_types import Animal
+from config import Config
 from single_player_env import SinglePlayerEnv
 
 
@@ -35,6 +36,24 @@ class Args:
     """the entity (team) of wandb's project"""
     capture_video: bool = False
     """whether to capture videos of the agent performances (check out `videos` folder)"""
+
+    # Game Options
+    score_land: bool = True
+    """whether to give reward for land connectivity"""
+    score_land_bonus: bool = False
+    """whether to score bonus points for player with most lands of type"""
+    score_hawk: bool = True
+    """whether to score hawk"""
+    score_grizzly: bool = True
+    """whether to score grizzly"""
+    score_salmon: bool = True
+    """whether to score salmon"""
+    score_fox: bool = True
+    """whether to score fox"""
+    score_deer: bool = True
+    """whether to score deer"""
+    allow_rotating_land: bool = True
+    """whether to allow rotation of land plates"""
 
     # Algorithm specific arguments
     env_id: str = "Cascadia"
@@ -103,9 +122,9 @@ def save_checkpoint(agent, optimizer, iteration, global_step, path, args, upload
         wandb.log_artifact(artifact)
 
 
-def make_env(env_id, idx, capture_video, run_name):
+def make_env(env_id, idx, capture_video, run_name, config: Config):
     def thunk():
-        env = SinglePlayerEnv()
+        env = SinglePlayerEnv(config)
         env = gym.wrappers.RecordEpisodeStatistics(env)
         return env
 
@@ -121,57 +140,71 @@ class ResidualConv2d(nn.Module):
         x = self.relu(self.conv(x)) + x
         return x
 
+class MaskedAvgPool2d(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x, mask):
+        # x has shape (..., c, h, w)
+        # mask has shape (..., h, w)
+        unsq_mask = mask[..., None, :, :]
+        x_red = torch.einsum('...chw->...c', (x * unsq_mask))
+        return x_red / unsq_mask.sum(dim=(-1, -2))
+
+
 class SpatialActorCriticModel(nn.Module):
     def __init__(self, n_channels, n_actions):
         super().__init__()
         self.backbone = nn.Sequential(
             nn.Conv2d(n_channels, 64, kernel_size=1),
             nn.ReLU(),
-            # ResidualConv2d(64),
-            # ResidualConv2d(64),
+            ResidualConv2d(64),
+            ResidualConv2d(64),
             nn.Conv2d(64, 128, kernel_size=3, padding='same'),
             nn.ReLU(),
-            # ResidualConv2d(128),
+            ResidualConv2d(128),
         )
 
         self.land_place_actor_head = nn.Sequential(
-            # nn.Conv2d(128, 128, kernel_size=3, padding='same'),
-            # nn.ReLU(),
+            nn.Conv2d(128, 128, kernel_size=3, padding='same'),
+            nn.ReLU(),
             nn.Conv2d(128, 6, kernel_size=1)
         )
 
         self.animal_place_actor_head = nn.Sequential(
-            # nn.Conv2d(128, 128, kernel_size=3, padding='same'),
-            # nn.ReLU(),
+            nn.Conv2d(128, 128, kernel_size=3, padding='same'),
+            nn.ReLU(),
             nn.Conv2d(128, 1, kernel_size=1)
         )
 
         self.one_dim_action_head = nn.Sequential(
-            nn.AdaptiveAvgPool2d(1),
-            nn.Flatten(start_dim=-3),
-            # nn.Linear(128, 128),
-            # nn.ReLU(),
+            nn.Linear(128, 128),
+            nn.ReLU(),
             nn.Linear(128, 23)
         )
 
         self.value_head = nn.Sequential(
-            nn.AdaptiveAvgPool2d(1),
-            nn.Flatten(start_dim=-3),
-            # nn.Linear(128, 128),
-            # nn.ReLU(),
+            nn.Linear(128, 128),
+            nn.ReLU(),
             nn.Linear(128, 1),
         )
 
+        self.masked_avg_pool = MaskedAvgPool2d()
+
     def forward(self, x):
+        mask = x[..., :30].sum(dim=-1) > 0
         x =  torch.einsum('...ijc->...cij', x)
         x = self.backbone(x)
+
+        x_pooled = self.masked_avg_pool(x, mask)
+
         land_place_logits = self.land_place_actor_head(x)
         animal_place_logits = self.animal_place_actor_head(x)
 
         land_place_logits = torch.einsum('...cij->...ijc', land_place_logits)
         animal_place_logits = torch.einsum('...cij->...ijc', animal_place_logits)
 
-        one_dim_action = self.one_dim_action_head(x)
+        one_dim_action = self.one_dim_action_head(x_pooled)
 
         action_logits = torch.cat([
             one_dim_action[..., :-1],
@@ -180,7 +213,7 @@ class SpatialActorCriticModel(nn.Module):
             one_dim_action[..., -1:],
         ], dim=-1)
 
-        value = self.value_head(x)
+        value = self.value_head(x_pooled)
 
         return action_logits, value
 
@@ -224,11 +257,11 @@ class ActorCriticModel(nn.Module):
 
 
 class Agent(nn.Module):
-    def __init__(self, envs=None):
+    def __init__(self, config: Config, envs=None):
         super().__init__()
-        grid_size = CONFIG.MAX_GRID_SIZE
+        grid_size = config.MAX_GRID_SIZE
         observation_grid_channels = 40
-        observation_single_channels = 1*10 + 80 + 3 + 20
+        observation_single_channels = 1*(10+21) + 80 + 3 + 20
         action_count = 1+1+4+16+6*grid_size**2 + (grid_size**2+1)
 
         observation_channels = observation_grid_channels + observation_single_channels
@@ -294,13 +327,24 @@ if __name__ == "__main__":
         print("Using CPU.")
         device = torch.device('cpu')
 
+    config = Config()
+    config.score_land = args.score_land
+    config.score_animals[Animal.GRIZZLY] = args.score_grizzly
+    config.score_animals[Animal.SALMON] = args.score_salmon
+    config.score_animals[Animal.FOX] = args.score_fox
+    config.score_animals[Animal.DEER] = args.score_deer
+    config.score_animals[Animal.HAWK] = args.score_hawk
+    config.allow_rotating_land = args.allow_rotating_land
+    config.score_land_bonus = args.score_land_bonus
+
+
     # env setup
     envs = gym.vector.AsyncVectorEnv(
-        [make_env(args.env_id, i, args.capture_video, run_name) for i in range(args.num_envs)],
+        [make_env(args.env_id, i, args.capture_video, run_name, config) for i in range(args.num_envs)],
     )
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
-    agent = Agent(envs).to(device)
+    agent = Agent(config, envs).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
     # ALGO Logic: Storage setup

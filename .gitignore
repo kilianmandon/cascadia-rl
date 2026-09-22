@@ -10,6 +10,8 @@ src/runs
 src/wandb
 src/checkpoints
 .vscode
+runs/
+wandb/
 
 # Virtual environments
 .venv

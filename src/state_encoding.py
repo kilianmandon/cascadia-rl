@@ -4,7 +4,7 @@ import torch
 from torch.nn import functional as F
 
 from base_types import GameState, Action, ActionKind
-from config import CONFIG
+from config import Config
 from game import (reroll_all_mask, reroll_three_mask, take_mixed_mask, take_pair_mask,
                   place_land_plate_mask, place_animal_mask)
 
@@ -21,9 +21,9 @@ neighbor_dirs_by_orientation = [
     neighbor_dirs[i:] + neighbor_dirs[:i] for i in range(6)
 ]
 
-def encode_individual_land_state(game_state: GameState, player: int):
+def encode_individual_land_state(game_state: GameState, player: int, config: Config):
     land_state = game_state.players[player].plate_grid
-    max_size = CONFIG.MAX_GRID_SIZE
+    max_size = config.MAX_GRID_SIZE
 
     # Land-type-by-side, supported animals, built animal
     out_channels = 6*5 + 5 + 5
@@ -51,11 +51,11 @@ def encode_individual_land_state(game_state: GameState, player: int):
     return out
 
 
-def compute_grid_state(game_state: GameState, player_idx: int):
+def compute_grid_state(game_state: GameState, player_idx: int, config: Config):
     n_players = len(game_state.players)
     individual_land_states = []
     for i in [(i+player_idx)%n_players for i in range(n_players)]:
-        individual_land_states.append(encode_individual_land_state(game_state, i))
+        individual_land_states.append(encode_individual_land_state(game_state, i, config))
 
     # channels n_players * 40
     grid_state = np.concatenate(individual_land_states, axis=-1)
@@ -64,11 +64,15 @@ def compute_grid_state(game_state: GameState, player_idx: int):
 
 def encode_individual_single_state(game_state: GameState, player: int):
     player_state = game_state.players[player]
-    state = np.zeros((10,), dtype=int)
+    pine_state = np.zeros((10,), dtype=int)
     pine_cone_idx = min(player_state.pine_cones, 9)
-    state[pine_cone_idx] = 1
+    pine_state[pine_cone_idx] = 1
 
-    return state
+    turns_left = 23 - len(player_state.plate_grid.keys())
+    thermo = np.arange(20) < turns_left
+    scalar = np.array([turns_left / 20])
+
+    return np.concatenate([pine_state, thermo, scalar], axis=-1)
 
 
 def encode_pool_state(game_state: GameState):
@@ -123,12 +127,12 @@ def compute_single_state(game_state: GameState, player_idx: int):
 
 
 
-    # shape n_players*10 + 80 + 3
+    # shape n_players*(10+21) + 80 + 3
     return np.concatenate((group_single_state, pool_state, phase_state, picked_state), axis=-1)
 
 
-def compute_state(game_state: GameState, player_idx: int):
-    grid_state = compute_grid_state(game_state, player_idx)
+def compute_state(game_state: GameState, player_idx: int, config: Config):
+    grid_state = compute_grid_state(game_state, player_idx, config)
     single_state = compute_single_state(game_state, player_idx)
 
     single_state = np.broadcast_to(single_state[None, None, :], grid_state.shape[:2] + (single_state.shape[-1],))
@@ -160,11 +164,11 @@ def allowed_animal_placement(game_state: GameState, player_idx: int):
 # 16: Take Mixed
 # max_size**2 * 6: place land
 # max_size**2: place animal
-def compute_action_mask(game_state: GameState, player_idx: int):
+def compute_action_mask(game_state: GameState, player_idx: int, config: Config):
     player_state = game_state.players[player_idx]
     land_state = player_state.plate_grid
     phase = game_state.game_phase
-    max_size = CONFIG.MAX_GRID_SIZE
+    max_size = config.MAX_GRID_SIZE
 
     n_actions = np.array([1, 1, 4, 16, 6*max_size**2, max_size**2+1])
     n_actions_prefix = np.concatenate((np.array([0]), np.cumsum(n_actions)), axis=0)
@@ -188,10 +192,13 @@ def compute_action_mask(game_state: GameState, player_idx: int):
                         mask[n_actions_prefix[3] + 4*i + j] = True
 
         case GamePhase.PLACING_LAND:
-            for i, j in place_land_plate_mask(game_state, player_idx)['index_place']:
+            for i, j in place_land_plate_mask(game_state, player_idx, config)['index_place']:
                 i, j = i + max_size // 2, j + max_size // 2
                 lower = n_actions_prefix[4] + (i*max_size + j) * 6
-                mask[lower: lower+6] = True
+                if config.allow_rotating_land:
+                    mask[lower: lower+6] = True
+                else:
+                    mask[lower] = True
 
         case GamePhase.PLACING_ANIMAL:
             for cell in place_animal_mask(game_state, player_idx)['index_place']:
@@ -218,12 +225,12 @@ def compute_action_mask(game_state: GameState, player_idx: int):
 # max_size**2 * 6: place land
 # max_size**2: place animal
 # 1: reject animal
-def action_from_index(game_state: GameState, player_idx: int, action_idx: int):
+def action_from_index(game_state: GameState, player_idx: int, action_idx: int, config: Config):
     player_state = game_state.players[player_idx]
     land_state = player_state.plate_grid
     phase = game_state.game_phase
 
-    max_size = CONFIG.MAX_GRID_SIZE
+    max_size = config.MAX_GRID_SIZE
     n_actions = np.array([1, 1, 4, 16, 6*max_size**2, max_size**2+1])
     n_actions_prefix = np.concatenate((np.array([0]), np.cumsum(n_actions)), axis=0)
 
@@ -277,5 +284,3 @@ def action_from_index(game_state: GameState, player_idx: int, action_idx: int):
         case _:
             raise ValueError("Action Index out of bounds of allowed actions.")
 
-
-        

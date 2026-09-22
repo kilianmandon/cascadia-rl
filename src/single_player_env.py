@@ -1,10 +1,10 @@
 import gymnasium as gym
 import numpy as np
 from game import action_transition
-from scoring import full_player_score, single_animal_player_score
+from scoring import full_player_score
 from state_encoding import action_from_index, compute_action_mask, compute_state
 from base_types import Animal, GamePhase, GameState
-from config import CONFIG
+from config import Config
 
 # Action Space:
 # 1: Reroll All
@@ -14,25 +14,24 @@ from config import CONFIG
 # max_size**2 * 6: place land
 # max_size**2+1: place animal
 class SinglePlayerEnv(gym.Env):
-    def __init__(self):
-        grid_size = CONFIG.MAX_GRID_SIZE
+    def __init__(self, config: Config):
+        grid_size = config.MAX_GRID_SIZE
         observation_grid_channels = 40
-        observation_single_channels = 1*10 + 80 + 3 + 20
+        observation_single_channels = 1*(10+21) + 80 + 3 + 20
         action_count = 1+1+4+16+6*grid_size**2 + (grid_size**2+1)
 
         self.stop_when_remaining = 61
-
         self.observation_space = gym.spaces.MultiBinary([grid_size, grid_size, observation_grid_channels+observation_single_channels])
-
         self.action_space = gym.spaces.Discrete(action_count)
+        self.config = config
 
     def _get_obs(self):
-        s = compute_state(self.game_state, self.game_state.active_player)
+        s = compute_state(self.game_state, self.game_state.active_player, self.config)
         return s
 
     def _get_info(self):
         return {
-            'action_mask': compute_action_mask(self.game_state, self.game_state.active_player)
+            'action_mask': compute_action_mask(self.game_state, self.game_state.active_player, self.config)
         }
 
     def reset(self, seed=None, options=None):
@@ -46,17 +45,17 @@ class SinglePlayerEnv(gym.Env):
 
     def step(self, action_idx):
         player_idx = self.game_state.active_player
-        old_score, _ = single_animal_player_score(self.game_state, player_idx, Animal.HAWK) 
+        old_score, _ = full_player_score(self.game_state, player_idx, self.config) 
 
 
-        action_mask = compute_action_mask(self.game_state, player_idx)
+        action_mask = compute_action_mask(self.game_state, player_idx, self.config)
         if not action_mask[action_idx]:
             raise ValueError("Player selected invalid action.")
 
-        action = action_from_index(self.game_state, player_idx, action_idx)
-        action_transition(self.game_state, action, player_idx)
+        action = action_from_index(self.game_state, player_idx, action_idx, self.config)
+        action_transition(self.game_state, action, player_idx, self.config)
 
-        new_score, score_info = single_animal_player_score(self.game_state, player_idx, Animal.HAWK)
+        new_score, score_info = full_player_score(self.game_state, player_idx, self.config)
 
         reward = (new_score - old_score) / 10
         observation = self._get_obs()

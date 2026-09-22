@@ -22,6 +22,7 @@ import numpy as np
 import torch
 
 from base_types import Action, ActionKind, Animal, BasePlate, BuiltPlate, GamePhase, GameState, Landscape
+from config import Config
 from game import action_transition, place_animal_mask, place_land_plate_mask, reroll_all_mask, reroll_three_mask
 from ppo import Agent
 from scoring import get_scoring_method_for, land_extra_points, score_land
@@ -46,6 +47,7 @@ class CascadiaUI(tk.Tk):
 
     def __init__(self, state: GameState, policies: Mapping[int, Callable[[GameState], Action]] | None = None):
         super().__init__()
+        self.config = Config()
         self.title("Cascadia — player & policy inspector")
         self.minsize(1120, 700)
         self.history = [copy.deepcopy(state)]
@@ -272,7 +274,7 @@ class CascadiaUI(tk.Tk):
 
     def legal_land_cells(self) -> set[tuple[int, int]]:
         if self.state.game_phase is not GamePhase.PLACING_LAND: return set()
-        return set(place_land_plate_mask(self.state, self.state.active_player)["index_place"])
+        return set(place_land_plate_mask(self.state, self.state.active_player, self.config)["index_place"])
 
     def legal_animal_cells(self) -> set[tuple[int, int]]:
         if self.state.game_phase is not GamePhase.PLACING_ANIMAL: return set()
@@ -324,7 +326,7 @@ class CascadiaUI(tk.Tk):
             self.status.set("Go to the newest state before making a different move."); return
         next_state = copy.deepcopy(self.state)
         try:
-            action_transition(next_state, Action(kind, params), next_state.active_player)
+            action_transition(next_state, Action(kind, params), next_state.active_player, self.config)
         except Exception as exc:
             self.status.set(f"Move rejected: {exc}"); return
         self.history.append(next_state); self.history_index += 1
@@ -345,15 +347,14 @@ class CascadiaUI(tk.Tk):
         return action.kind.name.replace("_", " ").title() + (f" {action.params}" if action.params else "")
 
 def build_policy():
-    from config import CONFIG
-
-    model = Agent()
+    config = Config()
+    model = Agent(config)
     # model.load_state_dict(torch.load('/Users/kilianmandon/Downloads/small_model.pt', map_location='cpu')["model_state_dict"])
 
     def policy(game_state: GameState) -> Action:
         player_idx = game_state.active_player
-        action_mask = torch.tensor(compute_action_mask(game_state, player_idx))
-        state = torch.tensor(compute_state(game_state, player_idx)).float()
+        action_mask = torch.tensor(compute_action_mask(game_state, player_idx, config))
+        state = torch.tensor(compute_state(game_state, player_idx, config)).float()
 
         state = state[None, ...]
         action_mask = action_mask[None, ...]
@@ -361,7 +362,7 @@ def build_policy():
         action_idx, log_prob, entropy, value = model.get_action_and_value(state, action_mask=action_mask)
         # action_idx = action_mask.int().argmax(dim=-1)
         action_idx = action_idx.item()
-        action = action_from_index(game_state, player_idx, action_idx)
+        action = action_from_index(game_state, player_idx, action_idx, config)
 
         return action
 

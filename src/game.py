@@ -1,7 +1,7 @@
 from collections import Counter
-from config import CONFIG
 
 from base_types import Animal, BasePlate, BuiltPlate, GameState, Action, ActionKind
+from config import Config
 
 def manage_overpopulation(state: GameState):
     animal_plates = state.pool_state.animal_pool
@@ -91,7 +91,7 @@ def take_mixed_mask(state: GameState, active_player_idx: int) -> bool:
             'take_idx_animal': [0, 1, 2, 3],
         }
 
-def place_land_plate_mask(state: GameState, active_player_idx: int):
+def place_land_plate_mask(state: GameState, active_player_idx: int, config: Config):
     player_state = state.players[active_player_idx]
     land_state = player_state.plate_grid
     neighbors = set()
@@ -107,10 +107,10 @@ def place_land_plate_mask(state: GameState, active_player_idx: int):
         for (off_i, off_j) in neighboring:
             ci = i + off_i
             cj = j + off_j
-            if ci < -CONFIG.MAX_GRID_SIZE//2 or ci > CONFIG.MAX_GRID_SIZE//2:
+            if ci < -config.MAX_GRID_SIZE//2 or ci >= config.MAX_GRID_SIZE//2:
                 continue
 
-            if cj < -CONFIG.MAX_GRID_SIZE//2 or cj > CONFIG.MAX_GRID_SIZE//2:
+            if cj < -config.MAX_GRID_SIZE//2 or cj >= config.MAX_GRID_SIZE//2:
                 continue
 
             neighbors.add((i+off_i, j+off_j))
@@ -122,12 +122,12 @@ def place_land_plate_mask(state: GameState, active_player_idx: int):
         'index_place': neighbors
     }
 
-def place_land_plate(state: GameState, action: Action, active_player_idx: int):
+def place_land_plate(state: GameState, action: Action, active_player_idx: int, config: Config):
     player_state = state.players[active_player_idx]
     land_state = player_state.plate_grid
     place_idx = action.params['index_place']
 
-    if place_idx[:2] not in place_land_plate_mask(state, active_player_idx)['index_place'] or not 0 <= place_idx[2] < 6:
+    if place_idx[:2] not in place_land_plate_mask(state, active_player_idx, config)['index_place'] or not 0 <= place_idx[2] < 6:
         raise ValueError("Invalid location selected for land placement.")
 
     plate = player_state.to_place[1]
@@ -160,7 +160,7 @@ def place_animal(state: GameState, action: Action, active_player_idx: int):
         state.bag.animal_plates[animal] += 1
 
 
-def action_transition(state: GameState, action: Action, active_player_idx: int): 
+def action_transition(state: GameState, action: Action, active_player_idx: int, config: Config): 
     match action.kind:
         case ActionKind.REROLL_ALL:
             reroll_all(state, action, active_player_idx)
@@ -173,7 +173,7 @@ def action_transition(state: GameState, action: Action, active_player_idx: int):
             take_mixed(state, action, active_player_idx)
             state.game_phase = state.game_phase.PLACING_LAND
         case ActionKind.PLACE_LAND:
-            place_land_plate(state, action, active_player_idx)
+            place_land_plate(state, action, active_player_idx, config)
             state.game_phase = state.game_phase.PLACING_ANIMAL
         case ActionKind.PLACE_ANIMAL:
             place_animal(state, action, active_player_idx)
