@@ -642,6 +642,29 @@ def land_extra_points(game_state: GameState):
 
     return final_player_scores
 
+def single_animal_player_score(game_state: GameState, player_idx: int, animal: Animal):
+    animal_scores = {
+        a: 0 for a in Animal
+    }
+    land_scores = {
+        l: 0 for l in Landscape
+    }
+    land_extra = {
+        l: 0 for l in Landscape
+    }
+    animal_scores[animal] = get_scoring_method_for(animal)(game_state, player_idx)
+
+    total_score = animal_scores[animal]
+
+    score_summary = {
+        'animal_scores': animal_scores,
+        'land_scores': land_scores,
+        'land_extra': land_extra,
+        'pine_cones': 0,
+    }
+
+    return total_score, score_summary
+
 def full_player_score(game_state: GameState, player_idx: int):
     animal_scores = {}
     total_score = 0

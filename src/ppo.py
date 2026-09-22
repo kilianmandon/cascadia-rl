@@ -39,7 +39,7 @@ class Args:
     # Algorithm specific arguments
     env_id: str = "Cascadia"
     """the id of the environment"""
-    total_timesteps: int = 50_000_000
+    total_timesteps: int = 15_000_000
     """total timesteps of the experiments"""
     learning_rate: float = 2.5e-4
     """the learning rate of the optimizer"""
@@ -111,47 +111,54 @@ def make_env(env_id, idx, capture_video, run_name):
 
     return thunk
 
+class ResidualConv2d(nn.Module):
+    def __init__(self, n_channels, kernel_size=3, padding='same'):
+        super().__init__()
+        self.conv = nn.Conv2d(n_channels, n_channels, kernel_size=kernel_size, padding=padding)
+        self.relu = nn.ReLU()
+
+    def forward(self, x):
+        x = self.relu(self.conv(x)) + x
+        return x
+
 class SpatialActorCriticModel(nn.Module):
     def __init__(self, n_channels, n_actions):
         super().__init__()
         self.backbone = nn.Sequential(
             nn.Conv2d(n_channels, 64, kernel_size=1),
             nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, padding='same'),
-            nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, padding='same'),
-            nn.ReLU(),
+            ResidualConv2d(64),
+            ResidualConv2d(64),
             nn.Conv2d(64, 128, kernel_size=3, padding='same'),
             nn.ReLU(),
-            nn.Conv2d(128, 128, kernel_size=3, padding='same'),
-            nn.ReLU(),
+            ResidualConv2d(128),
         )
 
         self.land_place_actor_head = nn.Sequential(
-            nn.Conv2d(128, 128, kernel_size=3, padding='same'),
-            nn.ReLU(),
+            # nn.Conv2d(128, 128, kernel_size=3, padding='same'),
+            # nn.ReLU(),
             nn.Conv2d(128, 6, kernel_size=1)
         )
 
         self.animal_place_actor_head = nn.Sequential(
-            nn.Conv2d(128, 128, kernel_size=3, padding='same'),
-            nn.ReLU(),
+            # nn.Conv2d(128, 128, kernel_size=3, padding='same'),
+            # nn.ReLU(),
             nn.Conv2d(128, 1, kernel_size=1)
         )
 
         self.one_dim_action_head = nn.Sequential(
             nn.AdaptiveAvgPool2d(1),
             nn.Flatten(start_dim=-3),
-            nn.Linear(128, 128),
-            nn.ReLU(),
+            # nn.Linear(128, 128),
+            # nn.ReLU(),
             nn.Linear(128, 23)
         )
 
         self.value_head = nn.Sequential(
             nn.AdaptiveAvgPool2d(1),
             nn.Flatten(start_dim=-3),
-            nn.Linear(128, 128),
-            nn.ReLU(),
+            # nn.Linear(128, 128),
+            # nn.ReLU(),
             nn.Linear(128, 1),
         )
 

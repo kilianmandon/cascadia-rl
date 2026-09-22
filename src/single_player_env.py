@@ -1,9 +1,9 @@
 import gymnasium as gym
 import numpy as np
 from game import action_transition
-from scoring import full_player_score
+from scoring import full_player_score, single_animal_player_score
 from state_encoding import action_from_index, compute_action_mask, compute_state
-from base_types import GamePhase, GameState
+from base_types import Animal, GamePhase, GameState
 from config import CONFIG
 
 # Action Space:
@@ -46,7 +46,7 @@ class SinglePlayerEnv(gym.Env):
 
     def step(self, action_idx):
         player_idx = self.game_state.active_player
-        old_score, _ = full_player_score(self.game_state, player_idx) 
+        old_score, _ = single_animal_player_score(self.game_state, player_idx, Animal.HAWK) 
 
 
         action_mask = compute_action_mask(self.game_state, player_idx)
@@ -56,7 +56,7 @@ class SinglePlayerEnv(gym.Env):
         action = action_from_index(self.game_state, player_idx, action_idx)
         action_transition(self.game_state, action, player_idx)
 
-        new_score, score_info = full_player_score(self.game_state, player_idx)
+        new_score, score_info = single_animal_player_score(self.game_state, player_idx, Animal.HAWK)
 
         reward = (new_score - old_score) / 10
         observation = self._get_obs()
