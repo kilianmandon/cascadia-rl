@@ -208,6 +208,8 @@ class CascadiaUI(tk.Tk):
 
     def draw_plate(self, canvas: tk.Canvas, plate: BasePlate, center: tuple[float, float], radius: float,
                    orientation: int = 0, ghost: bool = False, tags: str = "") -> None:
+        if plate is None:
+            return
         cx, cy = center
         opts = {"outline": "#36443a", "width": 1, "tags": tags}
         if ghost: opts["stipple"] = "gray50"
@@ -221,6 +223,8 @@ class CascadiaUI(tk.Tk):
                 self.draw_animal(canvas, cx + math.cos(angle) * radius * .42, cy + math.sin(angle) * radius * .42, animal, radius * .12, ghost)
 
     def draw_animal(self, canvas: tk.Canvas, x: float, y: float, animal: Animal, radius: float, ghost: bool = False) -> None:
+        if animal is None:
+            return
         opts = {"fill": ANIMAL_COLORS[animal], "outline": "#2e3030"}
         if ghost: opts["stipple"] = "gray50"
         canvas.create_oval(x - radius, y - radius, x + radius, y + radius, **opts)
@@ -341,16 +345,10 @@ class CascadiaUI(tk.Tk):
         return action.kind.name.replace("_", " ").title() + (f" {action.params}" if action.params else "")
 
 def build_policy():
-    from ppo import ActorCriticModel
     from config import CONFIG
 
-    grid_size = CONFIG.MAX_GRID_SIZE
-    observation_grid_channels = 40
-    observation_single_channels = 1*10 + 80 + 3
-    n_channels = observation_grid_channels + observation_single_channels
-    action_count = 1+1+4+16+6*grid_size**2 + (grid_size**2+1)
     model = Agent()
-    model.load_state_dict(torch.load('data/final.pt', map_location='cpu')["model_state_dict"])
+    # model.load_state_dict(torch.load('/Users/kilianmandon/Downloads/small_model.pt', map_location='cpu')["model_state_dict"])
 
     def policy(game_state: GameState) -> Action:
         player_idx = game_state.active_player
@@ -360,8 +358,8 @@ def build_policy():
         state = state[None, ...]
         action_mask = action_mask[None, ...]
 
-        # action_idx, log_prob, entropy, value = model.get_action_and_value(state, action_mask=action_mask)
-        action_idx = action_mask.int().argmax(dim=-1)
+        action_idx, log_prob, entropy, value = model.get_action_and_value(state, action_mask=action_mask)
+        # action_idx = action_mask.int().argmax(dim=-1)
         action_idx = action_idx.item()
         action = action_from_index(game_state, player_idx, action_idx)
 

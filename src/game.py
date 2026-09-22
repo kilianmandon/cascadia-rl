@@ -55,14 +55,8 @@ def take_pair(state: GameState, action: Action, active_player_idx: int) -> GameS
     base_plate = state.pool_state.plate_pool[take_idx]
     animal = state.pool_state.animal_pool[take_idx]
 
-    state.pool_state.animal_pool[take_idx] = state.bag.sample_animal_plate()
-
-    try:
-        state.pool_state.plate_pool[take_idx] = state.bag.sample_base_plate()
-    except ValueError:
-        state.pool_state.plate_pool[take_idx] = None
-
-
+    state.pool_state.animal_pool[take_idx] = None
+    state.pool_state.plate_pool[take_idx] = None
 
     state.players[active_player_idx].to_place = (animal, base_plate)
 
@@ -81,12 +75,8 @@ def take_mixed(state: GameState, action: Action, active_player_idx: int):
     base_plate = state.pool_state.plate_pool[take_idx_land]
     animal = state.pool_state.animal_pool[take_idx_animal]
 
-    try:
-        state.pool_state.plate_pool[take_idx_land] = state.bag.sample_base_plate()
-    except ValueError:
-        state.pool_state.plate_pool[take_idx_land] = None
-
-    state.pool_state.animal_pool[take_idx_animal] = state.bag.sample_animal_plate()
+    state.pool_state.plate_pool[take_idx_land] = None
+    state.pool_state.animal_pool[take_idx_animal] = None
 
     player_state.to_place = (animal, base_plate)
     player_state.pine_cones -= 1
@@ -190,6 +180,13 @@ def action_transition(state: GameState, action: Action, active_player_idx: int):
             state.players[active_player_idx].to_place = None
             state.players[active_player_idx].has_rerolled = False
             state.active_player = (active_player_idx + 1) % len(state.players)
+            for i, a in enumerate(state.pool_state.animal_pool):
+                if a is None:
+                    state.pool_state.animal_pool[i] = state.bag.sample_animal_plate()
+            for i, l in enumerate(state.pool_state.plate_pool):
+                if l is None:
+                    state.pool_state.plate_pool[i] = state.bag.sample_base_plate()
+
             state.game_phase = state.game_phase.PICKING
 
         

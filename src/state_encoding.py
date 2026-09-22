@@ -75,11 +75,23 @@ def encode_pool_state(game_state: GameState):
     # size 4*2*5 + 4*5 + 4*5 = 80
     pool_state = game_state.pool_state
 
-    landscapes = sum([[plate.left_landscape.value, plate.right_landscape.value] for plate in pool_state.plate_pool], [])
-    landscape_enc = F.one_hot(torch.tensor(landscapes), num_classes=5).numpy().reshape(-1)
-    supported_animals = np.array([1 if a in plate.animals else 0 for plate in pool_state.plate_pool for a in Animal])
+    landscape_enc = np.zeros((40,), dtype=int)
+    for i, plate in enumerate(pool_state.plate_pool):
+        if plate is not None:
+            for j, landscape_val in enumerate([plate.left_landscape.value, plate.right_landscape.value]):
+                landscape_enc[10*i + 5*j + landscape_val] = 1
 
-    animals = F.one_hot(torch.tensor([a.value for a in pool_state.animal_pool]), num_classes=5).numpy().reshape(-1)
+    supported_animals = np.zeros((20,), dtype=int)
+    for i, plate in enumerate(pool_state.plate_pool):
+        if plate is not None:
+            for a in plate.animals:
+                supported_animals[5*i + a.value] = 1
+
+    animals = np.zeros((20,), dtype=int)
+    for i, a in enumerate(pool_state.animal_pool):
+        if a is not None:
+            animals[5*i + a.value] = 1
+
 
     return np.concatenate((landscape_enc, supported_animals, animals), axis=-1)
 
@@ -95,8 +107,24 @@ def compute_single_state(game_state: GameState, player_idx: int):
     phase_state = F.one_hot(torch.tensor(game_state.game_phase.value), num_classes=3).numpy()
     pool_state = encode_pool_state(game_state)
 
+    player_state = game_state.players[player_idx]
+
+    if player_state.to_place is None:
+        picked_state = np.zeros((20))
+    else:
+        animal, plate = player_state.to_place
+        landscapes = [plate.left_landscape.value, plate.right_landscape.value]
+        landscape_enc = F.one_hot(torch.tensor(landscapes), num_classes=5).numpy().reshape(-1)
+        supported_animals = np.array([1 if a in plate.animals else 0 for a in Animal])
+        animals = F.one_hot(torch.tensor(animal.value), num_classes=5).numpy().reshape(-1)
+
+        picked_state = np.concatenate([landscape_enc, supported_animals, animals], axis=-1)
+
+
+
+
     # shape n_players*10 + 80 + 3
-    return np.concatenate((group_single_state, pool_state, phase_state), axis=-1)
+    return np.concatenate((group_single_state, pool_state, phase_state, picked_state), axis=-1)
 
 
 def compute_state(game_state: GameState, player_idx: int):

@@ -127,11 +127,11 @@ class SpatialActorCriticModel(nn.Module):
         self.backbone = nn.Sequential(
             nn.Conv2d(n_channels, 64, kernel_size=1),
             nn.ReLU(),
-            ResidualConv2d(64),
-            ResidualConv2d(64),
+            # ResidualConv2d(64),
+            # ResidualConv2d(64),
             nn.Conv2d(64, 128, kernel_size=3, padding='same'),
             nn.ReLU(),
-            ResidualConv2d(128),
+            # ResidualConv2d(128),
         )
 
         self.land_place_actor_head = nn.Sequential(
@@ -228,7 +228,7 @@ class Agent(nn.Module):
         super().__init__()
         grid_size = CONFIG.MAX_GRID_SIZE
         observation_grid_channels = 40
-        observation_single_channels = 1*10 + 80 + 3
+        observation_single_channels = 1*10 + 80 + 3 + 20
         action_count = 1+1+4+16+6*grid_size**2 + (grid_size**2+1)
 
         observation_channels = observation_grid_channels + observation_single_channels

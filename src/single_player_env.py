@@ -17,7 +17,7 @@ class SinglePlayerEnv(gym.Env):
     def __init__(self):
         grid_size = CONFIG.MAX_GRID_SIZE
         observation_grid_channels = 40
-        observation_single_channels = 1*10 + 80 + 3
+        observation_single_channels = 1*10 + 80 + 3 + 20
         action_count = 1+1+4+16+6*grid_size**2 + (grid_size**2+1)
 
         self.stop_when_remaining = 61
