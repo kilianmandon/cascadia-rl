@@ -85,7 +85,7 @@ class TransitionBlock(nn.Module):
         return x
 
 class Transformer(nn.Module):
-    def __init__(self, d_model, n_bias_embs, n_blocks=6):
+    def __init__(self, d_model, n_bias_embs, n_blocks=1):
         super().__init__()
         self.attn_blocks = nn.ModuleList([AttentionGridBias(d_model, n_bias_embs) for _ in range(n_blocks)])
         self.trans_blocks = nn.ModuleList([TransitionBlock(d_model) for _ in range(n_blocks)])
@@ -227,8 +227,6 @@ class ActorCriticTransformer(nn.Module):
         if first_masked == 0:
             first_masked = mask.shape[-1]
 
-        print(f'Cropping {first_masked}')
-
         features['mask'] = features['mask'][..., :first_masked]
         features['grid_encoding'] = features['grid_encoding'][..., :first_masked, :]
         features['grid_indices'] = features['grid_indices'][..., :first_masked, :]
@@ -238,7 +236,7 @@ class ActorCriticTransformer(nn.Module):
         
 
     def forward(self, features):
-        # features = self.crop_features(features)
+        features = self.crop_features(features)
         grid_encoding = features['grid_encoding']
         grid_indices = features['grid_indices']
         global_state = features['global_state']
