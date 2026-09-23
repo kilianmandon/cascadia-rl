@@ -223,7 +223,7 @@ class ActorCriticTransformer(nn.Module):
     def crop_features(self, features):
         # mask has shape (**batch_shape, n_token)
         mask = features['mask']
-        first_masked = ((~mask).int().argmax(dim=-1)).min().item()
+        first_masked = ((~mask).int().argmax(dim=-1)).max().item()
         if first_masked == 0:
             first_masked = mask.shape[-1]
 
