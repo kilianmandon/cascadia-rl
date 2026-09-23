@@ -2,7 +2,7 @@ import gymnasium as gym
 import numpy as np
 from game import action_transition
 from scoring import full_player_score
-from state_encoding import action_from_index, compute_action_mask, compute_state
+from state_encoding import action_from_index, build_transformer_state, compute_action_mask, compute_state, flatten_transformer_state
 from base_types import Animal, GamePhase, GameState
 from config import Config
 
@@ -21,12 +21,20 @@ class SinglePlayerEnv(gym.Env):
         action_count = 1+1+4+16+6*grid_size**2 + (grid_size**2+1)
 
         self.stop_when_remaining = 61
-        self.observation_space = gym.spaces.MultiBinary([grid_size, grid_size, observation_grid_channels+observation_single_channels])
+        # self.observation_space = gym.spaces.MultiBinary([grid_size, grid_size, observation_grid_channels+observation_single_channels])
+
+        n_players = 1
+        c_global_state = n_players*(10+21) + 80 + 3 + 20
+        c_grid_enc = 2 + 6*5 + 5 + 5
+        n_token = 127
+        c_total = c_global_state + n_token * (c_grid_enc + 2 + 1)
+        self.observation_space = gym.spaces.Box(-1e5, 1e5, shape=(c_total,))
         self.action_space = gym.spaces.Discrete(action_count)
         self.config = config
 
     def _get_obs(self):
-        s = compute_state(self.game_state, self.game_state.active_player, self.config)
+        # s = compute_state(self.game_state, self.game_state.active_player, self.config)
+        s = flatten_transformer_state(build_transformer_state(self.game_state, self.config))
         return s
 
     def _get_info(self):

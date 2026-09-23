@@ -91,6 +91,8 @@ class CascadiaUI(tk.Tk):
         self.reroll_three_button.pack(side="left", padx=4)
         self.mixed_button = ttk.Button(controls, text="Take mixed  ●", command=self.toggle_mixed)
         self.mixed_button.pack(side="left")
+        self.skip_animal_button = ttk.Button(controls, text="Don't place animal", command=self.skip_animal)
+        self.skip_animal_button.pack(side="left", padx=4)
         ttk.Label(controls, textvariable=self.status).pack(side="right")
 
         left = ttk.Frame(root)
@@ -159,6 +161,7 @@ class CascadiaUI(tk.Tk):
         self.reroll_three_button.configure(state="normal" if state.game_phase is GamePhase.PICKING and reroll_three_mask(state, state.active_player) else "disabled")
         self.mixed_button.configure(state="normal" if state.game_phase is GamePhase.PICKING and state.players[state.active_player].pine_cones else "disabled")
         self.mixed_button.configure(text=("Cancel mixed" if self.mixed_mode else "Take mixed  ●"))
+        self.skip_animal_button.configure(state="normal" if self.can_skip_animal() else "disabled")
         self.draw_pool(preview)
         self.draw_scores()
         if not gameover:
@@ -176,15 +179,23 @@ class CascadiaUI(tk.Tk):
 
     def draw_scores(self) -> None:
         for item in self.score.get_children(): self.score.delete(item)
-        try: extras = land_extra_points(self.state)
-        except Exception: extras = [{land: 0 for land in Landscape} for _ in self.state.players]
+        if self.config.score_land_bonus:
+            extras = land_extra_points(self.state)
+        else:
+            extras = [{land: 0 for land in Landscape} for _ in self.state.players]
+
         for idx, player in enumerate(self.state.players):
             animal_scores = {}
             for animal in Animal:
-                try: animal_scores[animal] = get_scoring_method_for(animal)(self.state, idx)
-                except Exception: animal_scores[animal] = 0
-            try: lands = score_land(self.state, idx)
-            except Exception: lands = {land: 0 for land in Landscape}
+                if self.config.score_animals[animal]:
+                    animal_scores[animal] = get_scoring_method_for(animal, self.config)(self.state, idx)
+                else:
+                    animal_scores[animal] = 0
+            if self.config.score_land:
+                lands = score_land(self.state, idx)
+            else:
+                lands = {land: 0 for land in Landscape}
+
             animals_text = " ".join(f"{SHORT_ANIMAL[a]}:{animal_scores[a]}" for a in Animal)
             lands_text = " ".join(f"{SHORT_LAND[l]}:{lands[l]}+{extras[idx][l]}" for l in Landscape)
             total = sum(animal_scores.values()) + sum(lands.values()) + sum(extras[idx].values())
@@ -280,6 +291,14 @@ class CascadiaUI(tk.Tk):
         if self.state.game_phase is not GamePhase.PLACING_ANIMAL: return set()
         return {cell for cell in place_animal_mask(self.state, self.state.active_player)["index_place"] if cell is not None}
 
+    def can_skip_animal(self) -> bool:
+        if self.state.game_phase is not GamePhase.PLACING_ANIMAL: return False
+        return None in place_animal_mask(self.state, self.state.active_player)["index_place"]
+
+    def skip_animal(self) -> None:
+        if self.can_skip_animal():
+            self.take(ActionKind.PLACE_ANIMAL, index_place=None)
+
     def cell_at(self, x: float, y: float) -> tuple[int, int] | None:
         radius = min(58, max(25, min(self.board.winfo_width() / 12, self.board.winfo_height() / 8)))
         # Checking the relevant small candidate set avoids tricky inverse axial rounding.
@@ -371,7 +390,7 @@ def build_policy():
 
 
 def launch(players: int = 2, policies: Mapping[int, Callable[[GameState], Action]] | None = None) -> CascadiaUI:
-    state = GameState(players, np.random.default_rng(5))
+    state = GameState(players, np.random.default_rng(None))
     state.init_game()
     app = CascadiaUI(state, policies)
     app.mainloop()
@@ -382,7 +401,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Launch the standalone Cascadia UI")
     parser.add_argument("--players", type=int, default=1, choices=range(1, 6))
     policies = {
-        0: build_policy()
+        # 0: build_policy()
     }
     args = parser.parse_args()
     launch(args.players, policies)
+
+# My Results, full score without extra land:
+# 83
+# 87

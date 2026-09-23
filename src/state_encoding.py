@@ -124,10 +124,7 @@ def compute_single_state(game_state: GameState, player_idx: int):
 
         picked_state = np.concatenate([landscape_enc, supported_animals, animals], axis=-1)
 
-
-
-
-    # shape n_players*(10+21) + 80 + 3
+    # shape n_players*(10+21) + 80 + 3 + 20
     return np.concatenate((group_single_state, pool_state, phase_state, picked_state), axis=-1)
 
 
@@ -138,6 +135,122 @@ def compute_state(game_state: GameState, player_idx: int, config: Config):
     single_state = np.broadcast_to(single_state[None, None, :], grid_state.shape[:2] + (single_state.shape[-1],))
 
     return np.concatenate((grid_state, single_state), axis=-1)
+
+## Transformer state
+def single_plate_encoding(plate: BuiltPlate):
+    out = np.zeros(6*5+5+5)
+    right_landscape_inds = (np.array([0, 1, 2]) + plate.orientation) % 6
+    left_landscape_inds = (np.array([3, 4, 5]) + plate.orientation) % 6
+
+    landscape_encoding = np.zeros(6, dtype=int)
+    landscape_encoding[right_landscape_inds] = plate.right_landscape.value
+    landscape_encoding[left_landscape_inds] = plate.left_landscape.value
+
+    landscape_onehot = F.one_hot(torch.tensor(landscape_encoding), num_classes=5).numpy().reshape(-1)
+
+    supported_animals = np.array([a.value for a in plate.animals])
+
+    out[:30] = landscape_onehot
+    out[supported_animals+30] = 1
+    if plate.built_animal is not None:
+        out[35 + plate.built_animal.value] = 1
+
+    return out
+
+def build_grid_for_transformer(game_state: GameState, player: int, config: Config):
+    land_state = game_state.players[player].plate_grid
+    max_size = config.MAX_GRID_SIZE
+
+    # occupied_flag ([1, 0] or [0, 1]), Land-type-by-side, supported animals, built animal
+    out_channels = 2 + 6*5 + 5 + 5
+
+    valid_frontier = lambda i,j: (i,j) not in land_state and (-max_size//2 <= i < max_size//2) and (-max_size//2 <= j < max_size//2)
+
+    frontier = set([
+        (i+di, j+dj) for i,j in land_state for di,dj in neighbor_dirs if valid_frontier(i+di, j+dj)
+    ])
+
+    indices = []
+    encodings = []
+
+
+    for (i,j), plate in land_state.items():
+        enc = single_plate_encoding(plate)
+        enc = np.concatenate([np.array([1, 0]), enc], axis=-1)
+        indices.append((i,j))
+        encodings.append(enc)
+
+    for (i,j) in frontier:
+        enc = np.zeros(out_channels)
+        enc[1] = 1
+        encodings.append(enc)
+        indices.append((i, j))
+
+    encodings = np.stack(encodings, axis=0)
+    indices = np.stack(indices, axis=0)
+    return encodings, indices
+
+def crop_pad_to_shape(v, shape):
+    slice_inds = tuple(slice(min(d1, d2)) for d1, d2 in zip(v.shape, shape))
+    return pad_to_shape(v[slice_inds], shape)
+
+def pad_to_shape(v, shape):
+    out = np.zeros(shape, v.dtype)
+    slice_inds = tuple(slice(dim) for dim in v.shape)
+    out[slice_inds] = v
+    return out
+
+def build_transformer_state(game_state: GameState, config: Config):
+    global_state = compute_single_state(game_state, game_state.active_player)
+    grid_encoding, grid_indices = build_grid_for_transformer(game_state, game_state.active_player, config)
+    n_token = grid_encoding.shape[0]
+    n_token_max = 127 # leave one token for the global state
+    assert n_token <= n_token_max
+    c_grid_enc = grid_encoding.shape[1]
+    mask = np.ones((n_token,), dtype=bool)
+
+    return {
+        'global_state': global_state,
+        'grid_encoding': crop_pad_to_shape(grid_encoding, (n_token_max, c_grid_enc)),
+        'grid_indices': crop_pad_to_shape(grid_indices, (n_token_max, 2)),
+        'mask': crop_pad_to_shape(mask, (n_token_max,))
+    }
+
+def flatten_transformer_state(state, n_players=1):
+    # n_players*(10+21) + 80 + 3
+    flat_state = np.concatenate([
+        state['global_state'],
+        state['grid_encoding'].reshape(-1),
+        state['grid_indices'].reshape(-1),
+        state['mask'].reshape(-1),
+
+    ], dtype=float)
+    return flat_state
+
+def unflatten_transformer_state(state, n_players=1):
+    batch_shape = state.shape[:-1]
+    c_global_state = n_players*(10+21) + 80 + 3 + 20
+    c_grid_enc = 2 + 6*5 + 5 + 5
+    n_token = 127
+    c_total_grid = c_grid_enc * n_token
+    c_total_grid_inds = n_token * 2
+    out_state = {}
+    start = 0
+    out_state['global_state'] = state[..., :c_global_state]
+    start += c_global_state
+    out_state['grid_encoding'] = state[..., start:start+c_total_grid].reshape(batch_shape+(n_token, c_grid_enc))
+    start += c_total_grid
+    out_state['grid_indices'] = state[..., start:start+c_total_grid_inds].reshape(batch_shape + (n_token, 2))
+    start += c_total_grid_inds
+    out_state['mask'] = state[..., start:start+n_token]
+
+    out_state['grid_indices'] = out_state['grid_indices'].long()
+    out_state['mask'] = out_state['mask'].bool()
+
+    return out_state
+
+
+##
 
 def allowed_land_placement(game_state: GameState, player_idx: int):
     land_state = game_state.players[player_idx].plate_grid

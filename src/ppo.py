@@ -13,9 +13,11 @@ import tyro
 from torch.distributions.categorical import Categorical
 from torch.utils.tensorboard import SummaryWriter
 
+from actor_critic_transformer import ActorCriticTransformer
 from base_types import Animal
 from config import Config
 from single_player_env import SinglePlayerEnv
+from state_encoding import unflatten_transformer_state
 
 
 @dataclass
@@ -82,9 +84,9 @@ class Args:
     """the surrogate clipping coefficient"""
     clip_vloss: bool = True
     """Toggles whether or not to use a clipped loss for the value function, as per the paper."""
-    ent_coef: float = 0.025
+    ent_coef: float = 0.01
     """coefficient of the entropy"""
-    use_normalized_entropy: bool = True
+    use_normalized_entropy: bool = False
     """Toggles whether entropy is normalized with the action mask."""
     vf_coef: float = 0.5
     """coefficient of the value function"""
@@ -265,14 +267,20 @@ class Agent(nn.Module):
         action_count = 1+1+4+16+6*grid_size**2 + (grid_size**2+1)
 
         observation_channels = observation_grid_channels + observation_single_channels
-        self.actor_critic = SpatialActorCriticModel(observation_channels, action_count)
+        # self.actor_critic = SpatialActorCriticModel(observation_channels, action_count)
+        n_players = 1
+        c_global_state = n_players*(10+21) + 80 + 3 + 20
+        c_grid_enc = 2 + 6*5 + 5 + 5
+        self.actor_critic = ActorCriticTransformer(c_global_state, c_grid_enc, config)
 
     def get_value(self, x):
-        _, value = self.actor_critic(x)
+        feats = unflatten_transformer_state(x)
+        _, value = self.actor_critic(feats)
         return value
 
     def get_action_and_value(self, x, action=None, action_mask=None):
-        logits, value = self.actor_critic(x)
+        feats = unflatten_transformer_state(x)
+        logits, value = self.actor_critic(feats)
         if action_mask is not None:
             logits[~action_mask] -= 1e8
         probs = Categorical(logits=logits)
@@ -339,7 +347,7 @@ if __name__ == "__main__":
 
 
     # env setup
-    envs = gym.vector.AsyncVectorEnv(
+    envs = gym.vector.SyncVectorEnv(
         [make_env(args.env_id, i, args.capture_video, run_name, config) for i in range(args.num_envs)],
     )
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
