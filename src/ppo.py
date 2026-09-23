@@ -1,4 +1,5 @@
 # docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/ppo/#ppopy
+import math
 import os
 import random
 import time
@@ -60,17 +61,21 @@ class Args:
     # Algorithm specific arguments
     env_id: str = "Cascadia"
     """the id of the environment"""
-    total_timesteps: int = 15_000_000
+    total_timesteps: int = 40_000_000
     """total timesteps of the experiments"""
     learning_rate: float = 2.5e-4
     """the learning rate of the optimizer"""
+    warmup_iterations: int = 100
+    """linear LR warmup over this many iterations"""
+    lr_floor_frac: float = 0.2
+    """minimum LR as a fraction of learning_rate"""
     num_envs: int = 48
     """the number of parallel game environments"""
     num_steps: int = 100
     """the number of steps to run in each environment per policy rollout"""
     anneal_lr: bool = True
     """Toggle learning rate annealing for policy and value networks"""
-    gamma: float = 0.99
+    gamma: float = 1.0
     """the discount factor gamma"""
     gae_lambda: float = 0.95
     """the lambda for the general advantage estimation"""
@@ -82,9 +87,9 @@ class Args:
     """Toggles advantages normalization"""
     clip_coef: float = 0.2
     """the surrogate clipping coefficient"""
-    clip_vloss: bool = True
+    clip_vloss: bool = False
     """Toggles whether or not to use a clipped loss for the value function, as per the paper."""
-    ent_coef: float = 0.01
+    ent_coef: float = 0.02
     """coefficient of the entropy"""
     use_normalized_entropy: bool = False
     """Toggles whether entropy is normalized with the action mask."""
@@ -92,7 +97,7 @@ class Args:
     """coefficient of the value function"""
     max_grad_norm: float = 0.5
     """the maximum norm for the gradient clipping"""
-    target_kl: float = None
+    target_kl: float = 0.05
     """the target KL divergence threshold"""
 
     # to be filled in runtime
@@ -290,6 +295,32 @@ class Agent(nn.Module):
         # action = action_mask.int().argmax(dim=-1)
         return action, probs.log_prob(action), probs.entropy(), value
 
+@torch.no_grad()
+def eval_return(agent, eval_envs, device, seed=42):
+    n_eval_epochs_target = 200
+    n_steps = 100
+    n_iter = math.ceil(n_eval_epochs_target/args.num_envs)
+    returns = []
+
+    for _ in range(n_iter):
+        obs, info = eval_envs.reset(seed)
+        for _ in range(n_steps):
+            obs = torch.tensor(obs, device=device, dtype=torch.float32)
+            action_mask = torch.tensor(info['action_mask'], device=device)
+            feats = unflatten_transformer_state(obs)
+            logits, _ = agent.actor_critic(feats)
+            logits = logits.masked_fill(~action_mask, -1e8)
+            action = logits.argmax(dim=-1)
+            action = action.cpu().numpy()
+            obs, _, _, _, info = eval_envs.step(action)
+            if 'final_info' in info:
+                rewards = info['final_info']['episode']['r']
+                terminated = info['final_info']['episode']['terminated']
+                for r, w in zip(rewards, terminated):
+                    if w: returns.append(r)
+    average_return = np.mean(returns)
+    return average_return
+
 
 if __name__ == "__main__":
     args = tyro.cli(Args)
@@ -350,6 +381,9 @@ if __name__ == "__main__":
     envs = gym.vector.AsyncVectorEnv(
         [make_env(args.env_id, i, args.capture_video, run_name, config) for i in range(args.num_envs)],
     )
+    eval_envs = gym.vector.AsyncVectorEnv(
+        [make_env(args.env_id, i, args.capture_video, run_name, config) for i in range(args.num_envs)],
+    )
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
     agent = Agent(config, envs).to(device)
@@ -376,8 +410,12 @@ if __name__ == "__main__":
     for iteration in range(1, args.num_iterations + 1):
         # Annealing the rate if instructed to do so.
         if args.anneal_lr:
-            frac = 1.0 - (iteration - 1.0) / args.num_iterations
-            frac = max(frac, 0.2)
+            if iteration <= args.warmup_iterations:
+                frac = iteration / args.warmup_iterations
+            else:
+                progress = (iteration - args.warmup_iterations) / max(1, args.num_iterations - args.warmup_iterations)
+                frac = 1.0 - progress
+                frac = max(frac, args.lr_floor_frac)
             lrnow = frac * args.learning_rate
             optimizer.param_groups[0]["lr"] = lrnow
 
@@ -454,6 +492,7 @@ if __name__ == "__main__":
         print('Starting update cycle...')
         for epoch in range(args.update_epochs):
             np.random.shuffle(b_inds)
+            epoch_kls = []
             for start in range(0, args.batch_size, args.minibatch_size):
                 end = start + args.minibatch_size
                 mb_inds = b_inds[start:end]
@@ -466,6 +505,7 @@ if __name__ == "__main__":
                     # calculate approx_kl http://joschu.net/blog/kl-approx.html
                     old_approx_kl = (-logratio).mean()
                     approx_kl = ((ratio - 1) - logratio).mean()
+                    epoch_kls.append(approx_kl.item())
                     clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
 
                 mb_advantages = b_advantages[mb_inds]
@@ -511,13 +551,15 @@ if __name__ == "__main__":
                 nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
                 optimizer.step()
 
-            if args.target_kl is not None and approx_kl > args.target_kl:
+            if args.target_kl is not None and np.mean(epoch_kls) > args.target_kl:
                 break
 
         y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
         var_y = np.var(y_true)
         explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
         print('Done')
+
+
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
@@ -539,6 +581,11 @@ if __name__ == "__main__":
         if iteration%checkpoint_every==0:
             ckpt_path = f'{ckpt_dir}/iter_{iteration}.pt'
             save_checkpoint(agent, optimizer, iteration, global_step, ckpt_path, args, upload_to_wandb=args.track)
+
+        eval_every = max(1, args.num_iterations//100)
+        if iteration%eval_every==0:
+            avg_return = eval_return(agent, eval_envs, device)
+            writer.add_scalar("charts/eval_return", avg_return, global_step)
 
 
     envs.close()

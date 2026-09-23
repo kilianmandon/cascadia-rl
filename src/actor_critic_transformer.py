@@ -85,7 +85,7 @@ class TransitionBlock(nn.Module):
         return x
 
 class Transformer(nn.Module):
-    def __init__(self, d_model, n_bias_embs, n_blocks=1):
+    def __init__(self, d_model, n_bias_embs, n_blocks=6):
         super().__init__()
         self.attn_blocks = nn.ModuleList([AttentionGridBias(d_model, n_bias_embs) for _ in range(n_blocks)])
         self.trans_blocks = nn.ModuleList([TransitionBlock(d_model) for _ in range(n_blocks)])

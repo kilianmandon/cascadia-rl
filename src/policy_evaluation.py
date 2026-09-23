@@ -1,13 +1,17 @@
 import copy
+from gymnasium.vector import AsyncVectorEnv
+import tqdm
+import torch
 
 from base_types import GamePhase, GameState
 from config import Config
 from game import action_transition
+from ppo import Agent
 from scoring import full_player_score
 from single_player_env import SinglePlayerEnv
 import numpy as np
 
-from state_encoding import action_from_index, compute_action_mask
+from state_encoding import action_from_index, compute_action_mask, unflatten_transformer_state
 
 def random_policy(obs, info, game_state, config):
     mask = info['action_mask']
@@ -46,43 +50,69 @@ def greedy_policy(obs, info, game_state: GameState, config, depth=3):
     return action_idx
 
 
-
-
-
-
-
-def test_policy(policy):
+def create_transformer_policy():
     config = Config()
-    config.score_land = False
-    config.allow_rotating_land = False
+    agent =  Agent(config)
+    agent.load_state_dict(torch.load('checkpoints/Cascadia__ppo__1__1790182147/final.pt')['model_state_dict'])
+    device = 'cuda'
+    agent.to(device)
 
-    env = SinglePlayerEnv(config)
+    def policy(obs, info, game_state: GameState, config):
+        obs = torch.tensor(obs, device=device, dtype=torch.float32)
+        action_mask = torch.tensor(info['action_mask'], device=device)
+        action_idx, _, _, _ = agent.get_action_and_value(obs, action_mask=action_mask)
+        action_idx = action_idx.cpu().numpy()
+        # feats = unflatten_transformer_state(obs)
+        # logits, value = agent.actor_critic(feats)
+        # logits[~action_mask] = -1e8
+        # action_idx = logits.argmax(dim=-1).cpu().numpy()
+
+        return action_idx
+
+    return policy
+
+
+
+
+def test_policy(policy, async_env=False):
+    config = Config()
+    # config.score_land = False
+    # config.allow_rotating_land = False
 
     num_steps = 100
-    num_tests = 100
-    rewards = []
+    num_tests = 200
+    num_parallel = 50
+    returns = []
 
-    for _  in range(num_tests):
+    if async_env:
+        env = AsyncVectorEnv([lambda: SinglePlayerEnv(config) for _ in range(num_parallel)])
+        num_iterations = num_tests // num_parallel
+    else:
+        env = SinglePlayerEnv(config)
+        num_iterations = num_tests
+
+
+    for _  in tqdm.tqdm(range(num_iterations)):
         observation, info = env.reset()
-        game_state = env.game_state
+        game_state = env.game_state if hasattr(env, 'game_state') else None
         for i in range(num_steps):
             action = policy(observation, info, game_state, config)
             observation, reward, terminated, truncated, info = env.step(action)
 
             if 'final_info' in info:
-                rew = info['final_info']['episode']['r']
-                print(rew)
-                rewards.append(rew)
+                rewards = info['final_info']['episode']['r']
+                terminated = info['final_info']['episode']['terminated']
+                for r, w in zip(rewards, terminated):
+                    if w: returns.append(r)
 
-            if terminated:
-                break
 
-    print(np.mean(rewards))
+    print(np.mean(returns), np.std(returns))
 
 
 
 def main():
-    test_policy(greedy_placement)
+    test_policy(create_transformer_policy(), async_env=True)
+    # test_policy(greedy_placement)
 
 if __name__=='__main__':
     main()
