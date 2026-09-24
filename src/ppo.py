@@ -69,13 +69,13 @@ class Args:
     """linear LR warmup over this many iterations"""
     lr_floor_frac: float = 0.2
     """minimum LR as a fraction of learning_rate"""
-    num_envs: int = 48
+    num_envs: int = 40
     """the number of parallel game environments"""
-    num_steps: int = 100
+    num_steps: int = 128
     """the number of steps to run in each environment per policy rollout"""
     anneal_lr: bool = True
     """Toggle learning rate annealing for policy and value networks"""
-    gamma: float = 1.0
+    gamma: float = 0.99
     """the discount factor gamma"""
     gae_lambda: float = 0.95
     """the lambda for the general advantage estimation"""
@@ -87,9 +87,9 @@ class Args:
     """Toggles advantages normalization"""
     clip_coef: float = 0.2
     """the surrogate clipping coefficient"""
-    clip_vloss: bool = False
+    clip_vloss: bool = True
     """Toggles whether or not to use a clipped loss for the value function, as per the paper."""
-    ent_coef: float = 0.02
+    ent_coef: float = 0.01
     """coefficient of the entropy"""
     use_normalized_entropy: bool = False
     """Toggles whether entropy is normalized with the action mask."""
@@ -303,7 +303,7 @@ def eval_return(agent, eval_envs, device, seed=42):
     returns = []
 
     for _ in range(n_iter):
-        obs, info = eval_envs.reset(seed)
+        obs, info = eval_envs.reset(seed=seed)
         for _ in range(n_steps):
             obs = torch.tensor(obs, device=device, dtype=torch.float32)
             action_mask = torch.tensor(info['action_mask'], device=device)

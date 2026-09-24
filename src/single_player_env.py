@@ -45,6 +45,7 @@ class SinglePlayerEnv(gym.Env):
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         self.generator = np.random.default_rng(seed=seed)
+        self.passed_steps = 0
 
         self.game_state = GameState(n_players=1, generator=self.generator)
         self.game_state.init_game()
@@ -62,6 +63,7 @@ class SinglePlayerEnv(gym.Env):
 
         action = action_from_index(self.game_state, player_idx, action_idx, self.config)
         action_transition(self.game_state, action, player_idx, self.config)
+        self.passed_steps += 1
 
         new_score, score_info = full_player_score(self.game_state, player_idx, self.config)
 
@@ -75,7 +77,7 @@ class SinglePlayerEnv(gym.Env):
             info['final_info'] = {
                     'episode': {
                         'r': new_score,
-                        'l': 20,
+                        'l': self.passed_steps,
                         'terminated': terminated,
                     }
                 }
