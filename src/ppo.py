@@ -459,7 +459,7 @@ if __name__ == "__main__":
                         writer.add_scalar("charts/episodic_length", np.mean(np.array(all_episodic_lengths)), global_step)
 
         t1 = time.time()
-        print(f'Env SPS: {100*args.num_envs / (t1-t0)}')
+        print(f'Env SPS: {args.num_steps*args.num_envs / (t1-t0)}')
         print('Bootstrapping value')
         # bootstrap value if not done
         with torch.no_grad():
