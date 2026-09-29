@@ -80,7 +80,7 @@ def test_policy(policy, async_env=False):
     # config.allow_rotating_land = False
 
     num_steps = 100
-    num_tests = 200
+    num_tests = 100
     num_parallel = 50
     returns = []
 
@@ -102,7 +102,14 @@ def test_policy(policy, async_env=False):
             if 'final_info' in info:
                 rewards = info['final_info']['episode']['r']
                 terminated = info['final_info']['episode']['terminated']
+
+                if isinstance(rewards, int):
+                    rewards = [rewards]
+                    terminated = [terminated]
                 for r, w in zip(rewards, terminated):
+                    print('')
+                    print(r)
+                    print('')
                     if w: returns.append(r)
 
 
@@ -111,8 +118,9 @@ def test_policy(policy, async_env=False):
 
 
 def main():
-    test_policy(create_transformer_policy(), async_env=True)
+    # test_policy(create_transformer_policy(), async_env=True)
     # test_policy(greedy_placement)
+    test_policy(greedy_policy)
 
 if __name__=='__main__':
     main()

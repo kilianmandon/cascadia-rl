@@ -2,11 +2,17 @@
 
 Run from the repository root with:
     PYTHONPATH=src python -m cascadia_ui --players 2
+    PYTHONPATH=src python -m cascadia_ui --load runs/episode_042.pkl
 
 For policy inspection, pass a mapping of player indexes to callables to
 ``CascadiaUI(..., policies={0: policy})``.  A policy is simply
 ``policy(game_state) -> Action``.  The UI shows its proposed action before
 executing it and keeps immutable history snapshots for back/forward review.
+
+Lists of GameStates can be saved/loaded from the UI (Save…/Load… buttons,
+Ctrl/Cmd+S, Ctrl/Cmd+O) or from scripts via ``save_states``/``load_states``.
+Files are pickles: only load files you trust, and note that renaming fields
+or enum members on the game classes can make old files unloadable.
 """
 
 from __future__ import annotations
@@ -14,9 +20,11 @@ from __future__ import annotations
 import argparse
 import copy
 import math
+import pickle
 import tkinter as tk
-from tkinter import ttk
-from typing import Callable, Mapping
+from pathlib import Path
+from tkinter import filedialog, messagebox, ttk
+from typing import Callable, Mapping, Sequence
 
 import numpy as np
 import torch
@@ -42,18 +50,89 @@ SHORT_ANIMAL = {Animal.GRIZZLY: "B", Animal.DEER: "D", Animal.SALMON: "S", Anima
 SHORT_LAND = {Landscape.MOUNTAIN: "M", Landscape.FOREST: "F", Landscape.PLAINS: "P", Landscape.WETLAND: "W", Landscape.RIVER: "R"}
 
 
+# --------------------------------------------------------------------------- #
+# Saving / loading lists of GameStates
+# --------------------------------------------------------------------------- #
+
+STATE_FILE_VERSION = 1
+STATE_FILETYPES = [("Cascadia states", "*.pkl"), ("All files", "*")]
+
+
+def save_states(path: str | Path, states: Sequence[GameState], index: int | None = None) -> None:
+    """Pickle a list of GameStates. ``index`` is the state the UI should open at (default: last)."""
+    states = list(states)
+    if not states:
+        raise ValueError("Refusing to save an empty state list")
+    payload = {
+        "version": STATE_FILE_VERSION,
+        "states": states,
+        "index": len(states) - 1 if index is None else index,
+    }
+    with open(path, "wb") as f:
+        pickle.dump(payload, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+def load_payload(path: str | Path) -> dict:
+    """Load a state file as ``{"version", "states", "index"}``.
+
+    Also accepts a bare pickled GameState or a bare pickled list of GameStates.
+    """
+    with open(path, "rb") as f:
+        payload = pickle.load(f)
+    if isinstance(payload, GameState):
+        payload = {"version": STATE_FILE_VERSION, "states": [payload], "index": 0}
+    elif isinstance(payload, list):
+        payload = {"version": STATE_FILE_VERSION, "states": payload, "index": len(payload) - 1}
+    if not isinstance(payload, dict):
+        raise ValueError(f"{path} has an unrecognised format")
+    states = payload.get("states")
+    if not states or not all(isinstance(s, GameState) for s in states):
+        raise ValueError(f"{path} does not contain a non-empty list of GameStates")
+    payload["index"] = max(0, min(payload.get("index", len(states) - 1), len(states) - 1))
+    return payload
+
+
+def load_states(path: str | Path) -> list[GameState]:
+    return load_payload(path)["states"]
+
+TURNS_PER_PLAYER = 20
+
+
+def turns_left(state: GameState) -> list[int]:
+    """Turns remaining per player, counting the active player's current turn.
+
+    Assumes one plate leaves the bag per turn (pool refill at end of turn) and
+    that the game ends at the same bag threshold as the game-over check.
+    """
+    n = len(state.players)
+    stop_when_remaining = 81 - TURNS_PER_PLAYER * n
+    remaining = max(0, len(state.bag.base_plates) - stop_when_remaining)
+    # Turns go active, active+1, ...; player at offset k gets turns k, k+n, k+2n, ...
+    return [max(0, -(-(remaining - (p - state.active_player) % n) // n)) for p in range(n)]
+
+
+# --------------------------------------------------------------------------- #
+# UI
+# --------------------------------------------------------------------------- #
+
 class CascadiaUI(tk.Tk):
     """A human-play and policy-inspection shell around the project game model."""
 
-    def __init__(self, state: GameState, policies: Mapping[int, Callable[[GameState], Action]] | None = None):
+    def __init__(self, state: GameState | Sequence[GameState],
+                 policies: Mapping[int, Callable[[GameState], Action]] | None = None,
+                 start_index: int | None = None):
         super().__init__()
-        self.config = Config()
+        # Named game_config (not config) so it doesn't shadow tk.Tk.config().
+        self.game_config = Config()
         self.title("Cascadia — player & policy inspector")
         self.minsize(1120, 700)
-        self.history = [copy.deepcopy(state)]
-        self.history_index = 0
+        states = [state] if isinstance(state, GameState) else list(state)
+        if not states:
+            raise ValueError("CascadiaUI needs at least one GameState")
+        self.history = [copy.deepcopy(s) for s in states]
+        self.history_index = len(states) - 1 if start_index is None else max(0, min(start_index, len(states) - 1))
         self.policies = dict(policies or {})
-        self.autoplay = [tk.BooleanVar(value=False) for _ in state.players]
+        self.autoplay = [tk.BooleanVar(value=False) for _ in self.state.players]
         self.rotation = 0
         self.hover_cell: tuple[int, int] | None = None
         self.hover_pool: tuple[int, str] | None = None
@@ -67,6 +146,12 @@ class CascadiaUI(tk.Tk):
         self.bind("<d>", lambda _: self.rotate(1))
         self.bind("<Left>", lambda _: self.back())
         self.bind("<Right>", lambda _: self.forward())
+        for modifier in ("Control", "Command"):
+            try:
+                self.bind(f"<{modifier}-s>", lambda _: self.save_history())
+                self.bind(f"<{modifier}-o>", lambda _: self.load_history())
+            except tk.TclError:  # "Command" only exists on macOS.
+                pass
         self.refresh()
 
     @property
@@ -84,6 +169,8 @@ class CascadiaUI(tk.Tk):
         controls.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
         ttk.Button(controls, text="← Back", command=self.back).pack(side="left")
         ttk.Button(controls, text="Forward →", command=self.forward).pack(side="left", padx=4)
+        ttk.Button(controls, text="Save…", command=self.save_history).pack(side="left", padx=(8, 0))
+        ttk.Button(controls, text="Load…", command=self.load_history).pack(side="left", padx=4)
         ttk.Separator(controls, orient="vertical").pack(side="left", fill="y", padx=8)
         self.reroll_all_button = ttk.Button(controls, text="Reroll all  ●", command=lambda: self.take(ActionKind.REROLL_ALL))
         self.reroll_all_button.pack(side="left")
@@ -130,6 +217,52 @@ class CascadiaUI(tk.Tk):
         self.board.bind("<Button-4>", lambda _: self.rotate(1))
         self.board.bind("<Button-5>", lambda _: self.rotate(-1))
 
+    # ----------------------------------------------------------------- #
+    # Save / load
+    # ----------------------------------------------------------------- #
+
+    def save_history(self) -> None:
+        path = filedialog.asksaveasfilename(parent=self, defaultextension=".pkl", filetypes=STATE_FILETYPES)
+        if not path:
+            return
+        try:
+            save_states(path, self.history, self.history_index)
+        except Exception as exc:
+            messagebox.showerror("Save failed", str(exc), parent=self)
+            return
+        self.status.set(f"Saved {len(self.history)} states to {Path(path).name}")
+
+    def load_history(self) -> None:
+        path = filedialog.askopenfilename(parent=self, filetypes=STATE_FILETYPES)
+        if not path:
+            return
+        try:
+            payload = load_payload(path)
+        except Exception as exc:
+            messagebox.showerror("Load failed", str(exc), parent=self)
+            return
+        self.set_history(payload["states"], payload["index"])
+        self.status.set(f"Loaded {len(self.history)} states from {Path(path).name}")
+
+    def set_history(self, states: Sequence[GameState], index: int | None = None) -> None:
+        states = list(states)
+        if not states:
+            raise ValueError("History must contain at least one GameState")
+        self.history = states
+        self.history_index = len(states) - 1 if index is None else max(0, min(index, len(states) - 1))
+        self.mixed_mode = False
+        self.mixed_land = self.mixed_animal = None
+        self.hover_cell = None
+        self.hover_pool = None
+        self.rotation = 0
+        if len(self.autoplay) != len(self.state.players):
+            self.autoplay = [tk.BooleanVar(value=False) for _ in self.state.players]
+        self.refresh()
+
+    # ----------------------------------------------------------------- #
+    # Rendering
+    # ----------------------------------------------------------------- #
+
     def _action_preview(self) -> Action | None:
         if self.history_index != len(self.history) - 1:
             return None
@@ -144,9 +277,9 @@ class CascadiaUI(tk.Tk):
 
     def refresh(self) -> None:
         state = self.state
-        
-        stop_when_remaining = 81 - 20*len(state.players)
-        gameover = (len(state.bag.base_plates) <= stop_when_remaining) and state.game_phase==GamePhase.PICKING
+
+        left = turns_left(state)
+        gameover = sum(left) == 0 and state.game_phase == GamePhase.PICKING
 
         phase = state.game_phase.name.replace("_", " ").title()
         active = state.active_player + 1
@@ -156,7 +289,8 @@ class CascadiaUI(tk.Tk):
             held_text = f"  Selected: {held[0].name.title()} + {held[1].left_landscape.name.title()}/{held[1].right_landscape.name.title()}"
         preview = self._action_preview()
         preview_text = f"  Policy preview: {self.describe(preview)}" if preview else ""
-        self.phase_label.configure(text=f"Player {active} is active — {phase}.{held_text}{preview_text}")
+        turns_text = "Game over." if gameover else f"{left[state.active_player]} turns left."
+        self.phase_label.configure(text=f"Player {active} is active — {phase}. {turns_text}{held_text}{preview_text}")
         self.reroll_all_button.configure(state="normal" if state.game_phase is GamePhase.PICKING and reroll_all_mask(state, state.active_player) else "disabled")
         self.reroll_three_button.configure(state="normal" if state.game_phase is GamePhase.PICKING and reroll_three_mask(state, state.active_player) else "disabled")
         self.mixed_button.configure(state="normal" if state.game_phase is GamePhase.PICKING and state.players[state.active_player].pine_cones else "disabled")
@@ -171,15 +305,17 @@ class CascadiaUI(tk.Tk):
             self.after(350, self.maybe_autoplay)
 
     def draw_autoplay(self) -> None:
-        for child in self.auto_frame.winfo_children(): child.destroy()
+        for child in self.auto_frame.winfo_children():
+            child.destroy()
         for index, variable in enumerate(self.autoplay):
             enabled = index in self.policies
             ttk.Checkbutton(self.auto_frame, text=f"Player {index + 1}: {'Policy' if enabled else 'Manual (no policy)'}",
                             variable=variable, state="normal" if enabled else "disabled", command=self.refresh).pack(anchor="w")
 
     def draw_scores(self) -> None:
-        for item in self.score.get_children(): self.score.delete(item)
-        if self.config.score_land_bonus:
+        for item in self.score.get_children():
+            self.score.delete(item)
+        if self.game_config.score_land_bonus:
             extras = land_extra_points(self.state)
         else:
             extras = [{land: 0 for land in Landscape} for _ in self.state.players]
@@ -187,11 +323,11 @@ class CascadiaUI(tk.Tk):
         for idx, player in enumerate(self.state.players):
             animal_scores = {}
             for animal in Animal:
-                if self.config.score_animals[animal]:
-                    animal_scores[animal] = get_scoring_method_for(animal, self.config)(self.state, idx)
+                if self.game_config.score_animals[animal]:
+                    animal_scores[animal] = get_scoring_method_for(animal, self.game_config)(self.state, idx)
                 else:
                     animal_scores[animal] = 0
-            if self.config.score_land:
+            if self.game_config.score_land:
                 lands = score_land(self.state, idx)
             else:
                 lands = {land: 0 for land in Landscape}
@@ -225,7 +361,8 @@ class CascadiaUI(tk.Tk):
             return
         cx, cy = center
         opts = {"outline": "#36443a", "width": 1, "tags": tags}
-        if ghost: opts["stipple"] = "gray50"
+        if ghost:
+            opts["stipple"] = "gray50"
         canvas.create_polygon(self.hex_points(cx, cy, radius, orientation, True), fill=LAND_COLORS[plate.left_landscape], **opts)
         canvas.create_polygon(self.hex_points(cx, cy, radius, orientation, False), fill=LAND_COLORS[plate.right_landscape], **opts)
         if isinstance(plate, BuiltPlate) and plate.built_animal is not None:
@@ -239,16 +376,19 @@ class CascadiaUI(tk.Tk):
         if animal is None:
             return
         opts = {"fill": ANIMAL_COLORS[animal], "outline": "#2e3030"}
-        if ghost: opts["stipple"] = "gray50"
+        if ghost:
+            opts["stipple"] = "gray50"
         canvas.create_oval(x - radius, y - radius, x + radius, y + radius, **opts)
         canvas.create_text(x, y, text=SHORT_ANIMAL[animal], font=("TkDefaultFont", max(7, int(radius))), fill="#172018")
 
     def draw_board(self, preview: Action | None = None) -> None:
-        if not hasattr(self, "board"): return
+        if not hasattr(self, "board"):
+            return
         self.board.delete("all")
         grid = self.state.players[self.state.active_player].plate_grid
         radius = min(58, max(25, min(self.board.winfo_width() / 12, self.board.winfo_height() / 8)))
-        for cell, plate in grid.items(): self.draw_plate(self.board, plate, self.center_for(cell, radius), radius, plate.orientation)
+        for cell, plate in grid.items():
+            self.draw_plate(self.board, plate, self.center_for(cell, radius), radius, plate.orientation)
         phase = self.state.game_phase
         held = self.state.players[self.state.active_player].to_place
         candidate = self.hover_cell
@@ -259,7 +399,8 @@ class CascadiaUI(tk.Tk):
             self.draw_plate(self.board, held[1], self.center_for(candidate, radius), radius, self.rotation, True)
         if phase is GamePhase.PLACING_ANIMAL and held:
             animal_cell = candidate
-            if preview and preview.kind is ActionKind.PLACE_ANIMAL: animal_cell = preview.params.get("index_place")
+            if preview and preview.kind is ActionKind.PLACE_ANIMAL:
+                animal_cell = preview.params.get("index_place")
             if animal_cell in self.legal_animal_cells():
                 x, y = self.center_for(animal_cell, radius)
                 self.draw_animal(self.board, x, y, held[0], radius * .27, True)
@@ -267,7 +408,8 @@ class CascadiaUI(tk.Tk):
             self.board.create_text(10, 10, anchor="nw", text=f"Rotate preview: {self.rotation * 60}° (wheel or A/D)", fill="#33483a")
 
     def draw_pool(self, preview: Action | None) -> None:
-        self.pool.delete("all"); self.pool_hits.clear()
+        self.pool.delete("all")
+        self.pool_hits.clear()
         pool = self.state.pool_state
         for index, (plate, animal) in enumerate(zip(pool.plate_pool, pool.animal_pool)):
             y = 15 + index * 84
@@ -275,7 +417,8 @@ class CascadiaUI(tk.Tk):
             if preview and ((preview.kind is ActionKind.TAKE_PAIR and preview.params.get("take_idx") == index) or
                             (preview.kind is ActionKind.TAKE_MIXED and index in (preview.params.get("take_idx_land"), preview.params.get("take_idx_animal")))):
                 highlight = True
-            if highlight: self.pool.create_rectangle(4, y - 8, 266, y + 66, fill="#d6ead7", outline="")
+            if highlight:
+                self.pool.create_rectangle(4, y - 8, 266, y + 66, fill="#d6ead7", outline="")
             self.draw_plate(self.pool, plate, (48, y + 28), 31)
             self.pool.create_text(104, y + 28, text="+", font=("TkDefaultFont", 15, "bold"))
             self.draw_animal(self.pool, 143, y + 28, animal, 17)
@@ -283,36 +426,56 @@ class CascadiaUI(tk.Tk):
             self.pool.create_text(180, y + 28, text=f"Pair {index + 1}{selected}", anchor="w", fill="#26352b")
             self.pool_hits.extend([((8, y - 5, 94, y + 61), index, "land"), ((110, y - 5, 174, y + 61), index, "animal")])
 
+    # ----------------------------------------------------------------- #
+    # Legality helpers
+    # ----------------------------------------------------------------- #
+
     def legal_land_cells(self) -> set[tuple[int, int]]:
-        if self.state.game_phase is not GamePhase.PLACING_LAND: return set()
-        return set(place_land_plate_mask(self.state, self.state.active_player, self.config)["index_place"])
+        if self.state.game_phase is not GamePhase.PLACING_LAND:
+            return set()
+        return set(place_land_plate_mask(self.state, self.state.active_player, self.game_config)["index_place"])
 
     def legal_animal_cells(self) -> set[tuple[int, int]]:
-        if self.state.game_phase is not GamePhase.PLACING_ANIMAL: return set()
+        if self.state.game_phase is not GamePhase.PLACING_ANIMAL:
+            return set()
         return {cell for cell in place_animal_mask(self.state, self.state.active_player)["index_place"] if cell is not None}
 
     def can_skip_animal(self) -> bool:
-        if self.state.game_phase is not GamePhase.PLACING_ANIMAL: return False
+        if self.state.game_phase is not GamePhase.PLACING_ANIMAL:
+            return False
         return None in place_animal_mask(self.state, self.state.active_player)["index_place"]
 
     def skip_animal(self) -> None:
         if self.can_skip_animal():
             self.take(ActionKind.PLACE_ANIMAL, index_place=None)
 
+    # ----------------------------------------------------------------- #
+    # Input handling
+    # ----------------------------------------------------------------- #
+
     def cell_at(self, x: float, y: float) -> tuple[int, int] | None:
         radius = min(58, max(25, min(self.board.winfo_width() / 12, self.board.winfo_height() / 8)))
         # Checking the relevant small candidate set avoids tricky inverse axial rounding.
         candidates = self.legal_land_cells() | self.legal_animal_cells() | set(self.state.players[self.state.active_player].plate_grid)
-        if not candidates: return None
+        if not candidates:
+            return None
         return min(candidates, key=lambda c: (self.center_for(c, radius)[0] - x) ** 2 + (self.center_for(c, radius)[1] - y) ** 2)
 
-    def on_board_motion(self, event: tk.Event) -> None: self.set_cell_hover(self.cell_at(event.x, event.y))
+    def on_board_motion(self, event: tk.Event) -> None:
+        self.set_cell_hover(self.cell_at(event.x, event.y))
+
     def set_cell_hover(self, cell: tuple[int, int] | None) -> None:
-        if cell != self.hover_cell: self.hover_cell = cell; self.draw_board(self._action_preview())
-    def on_wheel(self, event: tk.Event) -> None: self.rotate(1 if event.delta > 0 else -1)
+        if cell != self.hover_cell:
+            self.hover_cell = cell
+            self.draw_board(self._action_preview())
+
+    def on_wheel(self, event: tk.Event) -> None:
+        self.rotate(1 if event.delta > 0 else -1)
+
     def rotate(self, amount: int) -> None:
         if self.state.game_phase is GamePhase.PLACING_LAND:
-            self.rotation = (self.rotation + amount) % 6; self.draw_board(self._action_preview())
+            self.rotation = (self.rotation + amount) % 6
+            self.draw_board(self._action_preview())
 
     def on_board_click(self, _: tk.Event) -> None:
         if self.state.game_phase is GamePhase.PLACING_LAND and self.hover_cell in self.legal_land_cells():
@@ -322,48 +485,89 @@ class CascadiaUI(tk.Tk):
 
     def pool_hit(self, x: float, y: float) -> tuple[int, str] | None:
         return next(((index, side) for (x1, y1, x2, y2), index, side in self.pool_hits if x1 <= x <= x2 and y1 <= y <= y2), None)
-    def on_pool_motion(self, event: tk.Event) -> None: self.set_pool_hover(self.pool_hit(event.x, event.y))
+
+    def on_pool_motion(self, event: tk.Event) -> None:
+        self.set_pool_hover(self.pool_hit(event.x, event.y))
+
     def set_pool_hover(self, hit: tuple[int, str] | None) -> None:
-        if hit != self.hover_pool: self.hover_pool = hit; self.draw_pool(self._action_preview())
+        if hit != self.hover_pool:
+            self.hover_pool = hit
+            self.draw_pool(self._action_preview())
+
     def on_pool_click(self, event: tk.Event) -> None:
         hit = self.pool_hit(event.x, event.y)
-        if not hit or self.state.game_phase is not GamePhase.PICKING: return
+        if not hit or self.state.game_phase is not GamePhase.PICKING:
+            return
         index, side = hit
         if not self.mixed_mode:
-            self.take(ActionKind.TAKE_PAIR, take_idx=index); return
-        if side == "land": self.mixed_land = index
-        else: self.mixed_animal = index
+            self.take(ActionKind.TAKE_PAIR, take_idx=index)
+            return
+        if side == "land":
+            self.mixed_land = index
+        else:
+            self.mixed_animal = index
         if self.mixed_land is not None and self.mixed_animal is not None:
             self.take(ActionKind.TAKE_MIXED, take_idx_land=self.mixed_land, take_idx_animal=self.mixed_animal)
-            self.mixed_mode = False; self.mixed_land = self.mixed_animal = None
+            self.mixed_mode = False
+            self.mixed_land = self.mixed_animal = None
         self.refresh()
 
     def toggle_mixed(self) -> None:
-        self.mixed_mode = not self.mixed_mode; self.mixed_land = self.mixed_animal = None; self.refresh()
+        self.mixed_mode = not self.mixed_mode
+        self.mixed_land = self.mixed_animal = None
+        self.refresh()
+
+    # ----------------------------------------------------------------- #
+    # History / actions
+    # ----------------------------------------------------------------- #
+
     def take(self, kind: ActionKind, **params: object) -> None:
         if self.history_index != len(self.history) - 1:
-            self.status.set("Go to the newest state before making a different move."); return
+            self.status.set("Go to the newest state before making a different move.")
+            return
         next_state = copy.deepcopy(self.state)
         try:
-            action_transition(next_state, Action(kind, params), next_state.active_player, self.config)
+            action_transition(next_state, Action(kind, params), next_state.active_player, self.game_config)
         except Exception as exc:
-            self.status.set(f"Move rejected: {exc}"); return
-        self.history.append(next_state); self.history_index += 1
-        self.status.set(""); self.refresh()
+            self.status.set(f"Move rejected: {exc}")
+            return
+        self.history.append(next_state)
+        self.history_index += 1
+        self.status.set("")
+        self.refresh()
+
     def back(self) -> None:
-        if self.history_index: self.history_index -= 1; self.status.set(""); self.refresh()
+        if self.history_index:
+            self.history_index -= 1
+            self.status.set("")
+            self.refresh()
+
     def forward(self) -> None:
-        if self.history_index < len(self.history) - 1: self.history_index += 1; self.status.set(""); self.refresh()
+        if self.history_index < len(self.history) - 1:
+            self.history_index += 1
+            self.status.set("")
+            self.refresh()
+
     def maybe_autoplay(self) -> None:
-        if self.history_index != len(self.history) - 1: return
+        if self.history_index != len(self.history) - 1:
+            return
         player = self.state.active_player
-        if not self.autoplay[player].get() or player not in self.policies: return
+        if not self.autoplay[player].get() or player not in self.policies:
+            return
         action = self._action_preview()
-        if action: self.take(action.kind, **action.params)
+        if action:
+            self.take(action.kind, **action.params)
+
     @staticmethod
     def describe(action: Action | None) -> str:
-        if not action: return ""
+        if not action:
+            return ""
         return action.kind.name.replace("_", " ").title() + (f" {action.params}" if action.params else "")
+
+
+# --------------------------------------------------------------------------- #
+# Policy / entry point
+# --------------------------------------------------------------------------- #
 
 def build_policy():
     config = Config()
@@ -388,11 +592,15 @@ def build_policy():
     return policy
 
 
-
-def launch(players: int = 2, policies: Mapping[int, Callable[[GameState], Action]] | None = None) -> CascadiaUI:
-    state = GameState(players, np.random.default_rng(None))
-    state.init_game()
-    app = CascadiaUI(state, policies)
+def launch(players: int = 2, policies: Mapping[int, Callable[[GameState], Action]] | None = None,
+           load_path: str | Path | None = None) -> CascadiaUI:
+    if load_path is not None:
+        payload = load_payload(load_path)
+        app = CascadiaUI(payload["states"], policies, start_index=payload["index"])
+    else:
+        state = GameState(players, np.random.default_rng(None))
+        state.init_game()
+        app = CascadiaUI(state, policies)
     app.mainloop()
     return app
 
@@ -400,11 +608,12 @@ def launch(players: int = 2, policies: Mapping[int, Callable[[GameState], Action
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Launch the standalone Cascadia UI")
     parser.add_argument("--players", type=int, default=1, choices=range(1, 6))
+    parser.add_argument("--load", type=str, default=None, help="Pickle file with a list of GameStates to inspect")
     policies = {
         # 0: build_policy()
     }
     args = parser.parse_args()
-    launch(args.players, policies)
+    launch(args.players, policies, args.load)
 
 # My Results, full score without extra land:
 # 83
